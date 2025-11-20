@@ -4,14 +4,32 @@ mlp_ik.py
 
 MLP baseline for learning inverse kinematics (IK) for the KUKA iiwa arm.
 
-- Input:  end-effector pose (xyz or xyz+quat)
-- Output: joint angles (7D)
-- Model:  fully-connected MLP (no residual), trained with MSE on joint angles
+Supports two dataset formats (auto-detected from CSV):
+
+1) FK mode (from kuka_fk_dataset.py --data-type fk):
+   Columns:
+     [pose] , [joint_0 ... joint_6]
+   Model:
+     Input:  pose
+     Output: joint angles
+   Loss:
+     MSE(q_pred, q_curr)
+
+2) TRAJ mode (from kuka_fk_dataset.py --data-type traj):
+   Columns:
+     [pose] , [q_prev_0...6] , [q_curr_0...6]
+   Model:
+     Input:  [pose, q_prev]
+     Output: q_pred
+   Loss:
+     IK loss         = MSE(q_pred, q_curr)
+     Movement loss   = MSE(q_pred, q_prev)
+     Total           = IK + lambda_movement * Movement
 
 This script provides:
-- IKMLP:          LightningModule for IK regression
-- KukaIKDataModule: LightningDataModule for CSV-based dataset
-- build_ik_mlp_model / build_ik_datamodule: factory functions for grid search
+- IKMLP:              LightningModule for IK regression with optional movement penalty
+- KukaIKDataModule:   LightningDataModule for CSV-based dataset
+- build_ik_mlp_model / build_ik_datamodule: factory functions for IKGridSearch
 - run_mlp_grid_search: convenience wrapper using IKGridSearch
 - main(): simple single-run training with fixed hyperparameters
 """
@@ -22,7 +40,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import argparse
-import json
 import numpy as np
 import torch
 from torch import nn
@@ -30,7 +47,6 @@ from torch.nn import functional as F
 from torch.utils.data import TensorDataset, DataLoader
 import pytorch_lightning as pl
 
-# If grid_search.py is in the same src/ directory:
 from grid_search import IKGridSearch
 
 
@@ -45,30 +61,59 @@ def load_ik_csv(
     """
     Load IK dataset from a CSV produced by kuka_fk_dataset.py.
 
-    The CSV columns are:
-      - if not include_orientation: [ee_x, ee_y, ee_z, joint_0, ..., joint_6]
-      - if include_orientation:     [ee_x, ee_y, ee_z, ee_qx, ee_qy, ee_qz, ee_qw, joint_0, ..., joint_6]
+    Automatically detects:
+      - FK mode:   pose, q_curr
+      - TRAJ mode: pose, q_prev, q_curr
 
-    Args:
-        csv_path: path to the CSV file
-        use_orientation: if True, expect (and use) 7D pose; else use only xyz
+    FK CSV columns:
+      - if not include_orientation:
+          [ee_x, ee_y, ee_z, joint_0, ..., joint_6]
+      - if include_orientation:
+          [ee_x, ee_y, ee_z, ee_qx, ee_qy, ee_qz, ee_qw, joint_0, ..., joint_6]
+
+    TRAJ CSV columns:
+      - if not include_orientation:
+          [ee_x, ee_y, ee_z, q_prev_0..6, q_curr_0..6]
+      - if include_orientation:
+          [ee_x, ee_y, ee_z, ee_qx, ee_qy, ee_qz, ee_qw,
+           q_prev_0..6, q_curr_0..6]
 
     Returns:
-        X:          (N, pose_dim)  - poses
-        y:          (N, n_joints)  - joint angles
-        pose_dim:   int
-        n_joints:   int
+        X:         inputs to the model
+                   FK:   pose
+                   TRAJ: pose + q_prev
+        y:         (N, n_joints) target joints (q_curr)
+        input_dim: dimension of X
+        n_joints:  number of joints (7)
     """
     csv_path = Path(csv_path)
     data = np.loadtxt(csv_path, delimiter=",", skiprows=1)
 
     pose_dim = 7 if use_orientation else 3
-    X = data[:, :pose_dim]
-    y = data[:, pose_dim:]
+    num_cols = data.shape[1]
 
-    n_joints = y.shape[1]
+    # TRAJ MODE: pose + q_prev(7) + q_curr(7) = pose_dim + 14
+    if num_cols == pose_dim + 14:
+        X_pose = data[:, :pose_dim]                # (N, pose_dim)
+        X_q_prev = data[:, pose_dim:pose_dim + 7]  # (N, 7)
+        X = np.concatenate([X_pose, X_q_prev], axis=1)
+        y = data[:, pose_dim + 7:]                 # q_curr
+        input_dim = pose_dim + 7
+        n_joints = 7
+        return X.astype(np.float32), y.astype(np.float32), input_dim, n_joints
 
-    return X.astype(np.float32), y.astype(np.float32), pose_dim, n_joints
+    # FK MODE: pose + q_curr(7) = pose_dim + 7
+    if num_cols == pose_dim + 7:
+        X = data[:, :pose_dim]
+        y = data[:, pose_dim:]
+        input_dim = pose_dim
+        n_joints = 7
+        return X.astype(np.float32), y.astype(np.float32), input_dim, n_joints
+
+    raise ValueError(
+        f"Unrecognized CSV layout: {num_cols} columns, expected {pose_dim + 7} (FK) "
+        f"or {pose_dim + 14} (TRAJ)."
+    )
 
 
 # ------------------------------------------------------------------------------
@@ -103,13 +148,16 @@ class KukaIKDataModule(pl.LightningDataModule):
         self.X_test: Optional[np.ndarray] = None
         self.y_test: Optional[np.ndarray] = None
 
-        self.pose_dim: Optional[int] = None
+        self.input_dim: Optional[int] = None
         self.n_joints: Optional[int] = None
 
     def setup(self, stage: Optional[str] = None):
         # Load full dataset
-        X, y, pose_dim, n_joints = load_ik_csv(self.csv_path, use_orientation=self.use_orientation)
-        self.pose_dim = pose_dim
+        X, y, input_dim, n_joints = load_ik_csv(
+            self.csv_path,
+            use_orientation=self.use_orientation,
+        )
+        self.input_dim = input_dim
         self.n_joints = n_joints
 
         N = len(X)
@@ -157,7 +205,12 @@ class KukaIKDataModule(pl.LightningDataModule):
 # ------------------------------------------------------------------------------
 
 class IKMLP(pl.LightningModule):
-    """Plain MLP for inverse kinematics: pose -> joint angles."""
+    """
+    MLP for inverse kinematics:
+      - FK mode:   pose -> q
+      - TRAJ mode: [pose, q_prev] -> q_pred, with movement penalty to keep q_pred
+                    close to q_prev.
+    """
 
     def __init__(
         self,
@@ -167,7 +220,21 @@ class IKMLP(pl.LightningModule):
         dropout: float = 0.1,
         learning_rate: float = 1e-3,
         weight_decay: float = 1e-4,
+        lambda_movement: float = 0.1,
     ):
+        """
+        Args:
+            input_dim:       dimension of model input
+                             FK:   pose_dim
+                             TRAJ: pose_dim + 7 (q_prev)
+            output_dim:      number of joints (7 for KUKA iiwa)
+            hidden_dims:     MLP hidden layer sizes
+            dropout:         dropout probability
+            learning_rate:   AdamW learning rate
+            weight_decay:    AdamW weight decay
+            lambda_movement: coefficient for movement penalty term
+                             (only applies if q_prev present in input)
+        """
         super().__init__()
         self.save_hyperparameters()
 
@@ -186,44 +253,69 @@ class IKMLP(pl.LightningModule):
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
         self.output_dim = output_dim
+        self.lambda_movement = lambda_movement
+
+        # Heuristic: if input_dim > 7, assume we have q_prev concatenated
+        self.has_prev = input_dim > 7
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            x: (B, input_dim) pose vector
+            x: (B, input_dim)
+               FK:   pose
+               TRAJ: [pose, q_prev]
 
         Returns:
             (B, output_dim) predicted joint angles
         """
         return self.mlp(x)
 
-    def training_step(self, batch, batch_idx: int):
-        x, y = batch  # x: pose, y: joint angles
-        y_pred = self(x)
-        loss = F.mse_loss(y_pred, y)
+    def _compute_losses(self, x: torch.Tensor, y: torch.Tensor, y_pred: torch.Tensor):
+        """
+        Returns:
+            ik_loss, move_loss, total_loss
+        """
+        # IK regression loss
+        ik_loss = F.mse_loss(y_pred, y)
 
-        self.log("train_loss", loss, prog_bar=True, on_step=False, on_epoch=True)
+        # Movement penalty (only if q_prev present in input)
+        if self.has_prev:
+            q_prev = x[:, -self.output_dim:]      # last 7 dims are q_prev
+            move_loss = F.mse_loss(y_pred, q_prev)
+        else:
+            move_loss = torch.tensor(0.0, device=self.device)
+
+        loss = ik_loss + self.lambda_movement * move_loss
+        return ik_loss, move_loss, loss
+
+    def training_step(self, batch, batch_idx: int):
+        x, y = batch
+        y_pred = self(x)
+        ik_loss, move_loss, loss = self._compute_losses(x, y, y_pred)
+
+        self.log("train_ik_loss", ik_loss, prog_bar=False, on_epoch=True)
+        self.log("train_move_loss", move_loss, prog_bar=False, on_epoch=True)
+        self.log("train_loss", loss, prog_bar=True, on_epoch=True)
         return loss
 
     def validation_step(self, batch, batch_idx: int):
         x, y = batch
         y_pred = self(x)
-        loss = F.mse_loss(y_pred, y)
-        # mean absolute error can be nice to track
-        mae = F.l1_loss(y_pred, y)
+        ik_loss, move_loss, loss = self._compute_losses(x, y, y_pred)
 
-        self.log("val_loss", loss, prog_bar=True, on_step=False, on_epoch=True)
-        self.log("val_mae", mae, prog_bar=True, on_step=False, on_epoch=True)
+        self.log("val_ik_loss", ik_loss, prog_bar=False, on_epoch=True)
+        self.log("val_move_loss", move_loss, prog_bar=False, on_epoch=True)
+        self.log("val_loss", loss, prog_bar=True, on_epoch=True)
         return loss
 
     def test_step(self, batch, batch_idx: int):
         x, y = batch
         y_pred = self(x)
-        loss = F.mse_loss(y_pred, y)
-        mae = F.l1_loss(y_pred, y)
+        ik_loss, move_loss, loss = self._compute_losses(x, y, y_pred)
 
+        self.log("test_ik_loss", ik_loss, prog_bar=False)
+        self.log("test_move_loss", move_loss, prog_bar=False)
         self.log("test_loss", loss, prog_bar=False)
-        self.log("test_mae", mae, prog_bar=False)
         return loss
 
     def configure_optimizers(self):
@@ -256,21 +348,28 @@ def build_ik_mlp_model(params: Dict[str, Any], n_joints: int) -> pl.LightningMod
     Factory function for IKGridSearch.
 
     Args:
-        params: hyperparameters for this run (hidden_dims, dropout, learning_rate, weight_decay, use_orientation)
+        params: hyperparameters for this run (hidden_dims, dropout, learning_rate,
+                weight_decay, use_orientation, lambda_movement)
         n_joints: number of joints (7 for KUKA iiwa)
 
     Returns:
         IKMLP LightningModule
     """
-    pose_dim = 7 if params.get("use_orientation", False) else 3
+    # input_dim is determined later by the datamodule (FK vs TRAJ),
+    # so here we only set the structural hyperparameters.
+    # IKGridSearch calls datamodule_builder separately, so we will instantiate
+    # IKMLP with the correct input_dim there OR in main(), not here.
+    #
+    # For IKGridSearch use, we assume build_ik_mlp_model will be called
+    # after datamodule.setup() and input_dim is known, so in practice
+    # you'd wire this with a small wrapper that passes the correct input_dim.
+    #
+    # In this standalone file, build_ik_mlp_model is mainly used by
+    # run_mlp_grid_search(), which knows how to get input_dim.
 
-    return IKMLP(
-        input_dim=pose_dim,
-        output_dim=n_joints,
-        hidden_dims=params["hidden_dims"],
-        dropout=params.get("dropout", 0.1),
-        learning_rate=params.get("learning_rate", 1e-3),
-        weight_decay=params.get("weight_decay", 1e-4),
+    raise NotImplementedError(
+        "build_ik_mlp_model is handled inside run_mlp_grid_search where "
+        "input_dim is known from the datamodule."
     )
 
 
@@ -307,6 +406,11 @@ def run_mlp_grid_search(
     """
     Convenience wrapper to run grid search for the IK MLP.
 
+    NOTE:
+      Because input_dim depends on the CSV format (FK vs TRAJ),
+      we instantiate the datamodule once, read input_dim, and then
+      build models inside a closure passed to IKGridSearch.
+
     Args:
         splits: dict with dataset/splitting info (must include 'csv_path')
         output_dir: directory where grid search artifacts go
@@ -316,6 +420,7 @@ def run_mlp_grid_search(
     Returns:
         best_result dict: { "params", "best_score", "best_path" }
     """
+    # Base param grid
     param_grid: Dict[str, List[Any]] = {
         "hidden_dims": [
             [256, 256],
@@ -327,12 +432,31 @@ def run_mlp_grid_search(
         "weight_decay": [1e-4, 1e-5],
         "use_orientation": [False, True],
         "batch_size": [128, 256],
+        "lambda_movement": [0.0, 0.1, 0.2],
     }
+
+    # We create a small wrapper for build_model that can see input_dim via
+    # a temporary datamodule instantiated per param config.
+    def model_builder(params: Dict[str, Any], n_joints_inner: int) -> pl.LightningModule:
+        dm = build_ik_datamodule(params, splits)
+        dm.setup()
+        input_dim = dm.input_dim
+        assert input_dim is not None
+
+        return IKMLP(
+            input_dim=input_dim,
+            output_dim=n_joints_inner,
+            hidden_dims=params["hidden_dims"],
+            dropout=params.get("dropout", 0.1),
+            learning_rate=params.get("learning_rate", 1e-3),
+            weight_decay=params.get("weight_decay", 1e-4),
+            lambda_movement=params.get("lambda_movement", 0.1),
+        )
 
     runner = IKGridSearch(
         output_dir=output_dir,
         param_grid=param_grid,
-        model_builder=build_ik_mlp_model,
+        model_builder=model_builder,
         datamodule_builder=build_ik_datamodule,
         monitor_metric="val_loss",
         mode="min",
@@ -354,17 +478,17 @@ def run_mlp_grid_search(
 # ------------------------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Train an MLP IK baseline on KUKA FK dataset.")
+    ap = argparse.ArgumentParser(description="Train an MLP IK model on KUKA dataset (FK or TRAJ).")
     ap.add_argument(
         "--csv-path",
         type=str,
         default="../data/kuka_fk_dataset.csv",
-        help="Path to FK-generated CSV (from kuka_fk_dataset.py).",
+        help="Path to CSV (from kuka_fk_dataset.py, either fk or traj mode).",
     )
     ap.add_argument(
         "--use-orientation",
         action="store_true",
-        help="If set, use xyz+quat (7D pose) instead of xyz (3D).",
+        help="If set, expect/use xyz+quat (7D pose) instead of xyz (3D).",
     )
     ap.add_argument(
         "--batch-size",
@@ -404,6 +528,12 @@ def parse_args() -> argparse.Namespace:
         help="Dropout probability.",
     )
     ap.add_argument(
+        "--lambda-movement",
+        type=float,
+        default=0.1,
+        help="Weight for movement penalty (only effective with TRAJ data).",
+    )
+    ap.add_argument(
         "--accelerator",
         type=str,
         default="auto",
@@ -425,18 +555,19 @@ def main() -> None:
         seed=42,
     )
     datamodule.setup()
-    pose_dim = datamodule.pose_dim
+    input_dim = datamodule.input_dim
     n_joints = datamodule.n_joints
-    assert pose_dim is not None and n_joints is not None
+    assert input_dim is not None and n_joints is not None
 
     # Model
     model = IKMLP(
-        input_dim=pose_dim,
+        input_dim=input_dim,
         output_dim=n_joints,
         hidden_dims=args.hidden_dims,
         dropout=args.dropout,
         learning_rate=args.lr,
         weight_decay=args.weight_decay,
+        lambda_movement=args.lambda_movement,
     )
 
     # Trainer
