@@ -1,8 +1,9 @@
 numpy
 pandas
 torch
-pybullet
 scipy
 networkx
 matplotlib
 pytorch_lightning
+torch_geometric
+pybullet
