@@ -193,26 +193,32 @@ def rollout_model(
                 q_new = q + dq
 
             elif model_type == "mlp":
-                # ASSUMPTION:
-                #   - If the MLP was trained in trajectory mode, its input is
-                #     [pose, q_prev] and output is absolute q_curr.
-                #   - If it was trained in single-shot mode, its input is pose only
-                #     and output is q_curr.
-                # We detect which case by comparing model.input_dim to pose_dim.
+                # Determine whether MLP is Δq-based or absolute
+                predict_delta = bool(getattr(model.hparams, "predict_delta", False))
+
                 input_dim = int(getattr(model.hparams, "input_dim", pose_dim))
                 if input_dim == pose_dim + 7:
+                    # trajectory MLP input = [pose, q_prev]
                     x = np.concatenate([pose_t, q], axis=0).astype(np.float32)
                 elif input_dim == pose_dim:
+                    # single-shot (absolute q) model
                     x = pose_t.astype(np.float32)
                 else:
                     raise ValueError(
                         f"Unexpected MLP input_dim={input_dim}, pose_dim={pose_dim}."
                     )
 
-                x_t = torch.from_numpy(x[None, :]).to(device)  # (1, D)
-                q_pred = model(x_t)[0].cpu().numpy().astype(np.float32)
-                dq = q_pred - q
-                q_new = q_pred
+                x_t = torch.from_numpy(x[None, :]).to(device)
+                out = model(x_t)[0].cpu().numpy().astype(np.float32)
+
+                if predict_delta:
+                    # Δq model: behaves like GNN
+                    dq = out
+                    q_new = q + dq
+                else:
+                    # absolute-q model
+                    dq = out - q
+                    q_new = out
             else:
                 raise ValueError(f"Unknown model_type: {model_type}")
 
