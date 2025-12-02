@@ -3,6 +3,7 @@ pandas
 torch
 scipy
 networkx
+seaborn
 matplotlib
 pytorch_lightning
 torch_geometric

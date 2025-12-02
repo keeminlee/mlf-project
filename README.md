@@ -133,6 +133,14 @@ Checkpoints saved to:
 
 ## 🔗 3. Train GNN IK Model (Δq Only)
 
+**Note:** The GNN model is designed for trajectory-based IK only (not single-shot). This is an architectural choice:
+- The graph structure encodes the kinematic chain with joint nodes that include `q_prev` (previous joint state) as features
+- The model predicts **Δq** (incremental joint changes) rather than absolute joint angles
+- This enables smooth trajectory following and exploits the serial chain structure of the robot
+- The movement penalty in the loss function encourages small, smooth joint movements
+
+The MLP model is more flexible and supports both single-shot (absolute q) and trajectory (Δq) modes.
+
 ```bash
 python src/gnn_ik.py \
   --csv-path data/kuka_traj_dataset_traj.csv \
@@ -158,8 +166,8 @@ Checkpoints saved to:
 python src/eval_ik_models.py \
   --csv-path data/kuka_traj_dataset_traj.csv \
   --use-orientation \
-  --mlp-ckpt mlp_ik_traj_checkpoints/ikmlp-epoch=006-val_loss=0.0025.ckpt \
-  --gnn-ckpt gnn_ik_checkpoints/gnnik-epoch=032-val_loss=0.0025.ckpt \
+  --mlp-ckpt mlp_ik_traj_checkpoints/ikmlp-epoch=AAA-val_loss=BBB.ckpt \
+  --gnn-ckpt gnn_ik_checkpoints/gnnik-epoch=XXX-val_loss=YYY.ckpt \
   --num-samples 200
 ```
 
@@ -204,7 +212,88 @@ Outputs:
 - Damped Least Squares IK  
 - PyBullet's built-in IK solver  
 
-Useful for comparisons.
+**Note:** Classical IK baselines are automatically evaluated and included in the report results (Section 7). They are compared against MLP and GNN models in all plots and metrics.
+
+To evaluate classical IK methods separately:
+
+```bash
+python -c "
+from src.classical_ik import *
+from src.data_utils import load_traj_csv
+import numpy as np
+
+# Setup
+cid = connect_pybullet(gui=False)
+kuka_uid = load_kuka()
+joint_indices = get_revolute_joints(kuka_uid)
+ee_link_index = joint_indices[-1]
+joint_l, joint_u = get_joint_limits(kuka_uid, joint_indices)
+
+# Load data
+poses, q_prev, q_curr, pose_dim = load_traj_csv('data/kuka_traj_dataset_traj.csv', use_orientation=True)
+
+# Example: Solve IK for first sample
+target_pos = poses[0][:3]
+target_orn = poses[0][3:7] if pose_dim == 7 else None
+q_init = q_prev[0]
+
+# DLS IK
+q_dls, info = ik_damped_least_squares(
+    kuka_uid, joint_indices, ee_link_index,
+    target_pos, target_orn, q_init,
+    joint_l, joint_u
+)
+
+# PyBullet IK
+q_pb = ik_pybullet_builtin(
+    kuka_uid, joint_indices, ee_link_index,
+    target_pos, target_orn, joint_l, joint_u
+)
+
+print('DLS solution:', q_dls)
+print('PyBullet solution:', q_pb)
+print('DLS info:', info)
+"
+```
+
+---
+
+## 📊 7. Generate Report Results and Plots
+
+Generate all results and plots for the report:
+
+```bash
+# Update checkpoint paths in run_report_generation.sh first, then:
+./run_report_generation.sh
+
+# Or run directly:
+python src/generate_report_results.py \
+  --csv-path data/kuka_traj_dataset_traj.csv \
+  --mlp-ckpt mlp_ik_traj_checkpoints/ikmlp-epoch=AAA-val_loss=BBB.ckpt \
+  --gnn-ckpt gnn_ik_checkpoints/gnnik-epoch=XXX-val_loss=YYY.ckpt \
+  --results-dir results
+```
+
+This generates:
+- **Trajectory rollout evaluation**: Stability and cumulative EE drift over long trajectories
+  - Plot: EE error over trajectory steps (mean ± std)
+  - Plot: Cumulative EE drift over trajectories
+  - Data: Statistics (mean/std/max EE error, cumulative drift, mean Δq norm)
+- **Lambda sweep results**: Accuracy vs smoothness tradeoff (requires models trained with different λ values)
+  - Plot: Joint MSE vs Lambda
+  - Plot: EE MSE vs Lambda
+  - Plot: Mean Δq (smoothness) vs Lambda
+  - Plot: Accuracy vs Smoothness tradeoff
+  - Data: Metrics for each lambda value
+- **All plots for report** (includes classical IK baselines):
+  - Joint MSE/MAE comparison (MLP, GNN, DLS, PyBullet)
+  - EE MSE/MAE comparison (MLP, GNN, DLS, PyBullet)
+  - Mean Δq per model (MLP, GNN, DLS, PyBullet)
+  - Boxplot comparing movement magnitudes (MLP, GNN)
+
+Results are saved to `results/` directory:
+- `results/plots/` - All PNG plots (300 DPI, ready for report)
+- `results/data/` - JSON and NPZ data files
 
 ---
 
