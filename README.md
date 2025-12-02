@@ -29,17 +29,33 @@ pip install -r requirements.txt
 ## 📁 Project Structure
 
 ```text
-data/                     # CSV datasets generated via PyBullet
-src/
-  kuka_fk_dataset.py      # FK data generator
-  classical_ik.py         # FK, Jacobian, DLS IK, PyBullet IK
-  data_utils.py           # Shared data loading utilities
-  mlp_ik.py               # MLP IK model
-  gnn_ik.py               # GNN Δq model
-  eval_ik_models.py       # Evaluation (joint + EE)
-  trajectory_rollout.py   # Multi-step rollout experiments
-  grid_search.py          # Hyperparameter grid search utility
-notebooks/                # Optional analysis & plots
+mlf-project/
+├── data/                          # CSV datasets generated via PyBullet
+│   ├── kuka_fk_dataset.csv       # Single-shot FK dataset
+│   └── kuka_traj_dataset_traj.csv # Trajectory dataset (Δq training)
+│
+├── src/                           # Source code
+│   ├── kuka_fk_dataset.py        # FK data generator (single-shot & trajectory)
+│   ├── classical_ik.py           # Classical IK: FK, Jacobian, DLS, PyBullet IK
+│   ├── data_utils.py              # Shared data loading utilities
+│   ├── mlp_ik.py                  # MLP IK model (single-shot & trajectory Δq)
+│   ├── gnn_ik.py                  # GNN IK model (trajectory Δq only)
+│   ├── eval_ik_models.py          # Model evaluation (joint + EE errors)
+│   ├── trajectory_rollout.py      # Sequential trajectory rollout experiments
+│   ├── grid_search.py             # Hyperparameter grid search utility
+│   └── generate_report_results.py # Report generation (plots + metrics)
+│
+├── results/                        # Generated results and plots
+│   ├── plots/                      # All plots (PNG, 300 DPI)
+│   └── data/                       # Metrics and data files (JSON, NPZ)
+│
+├── mlp_ik_checkpoints/            # MLP single-shot checkpoints (created during training)
+├── mlp_ik_traj_checkpoints/       # MLP trajectory Δq checkpoints (created during training)
+├── gnn_ik_checkpoints/            # GNN trajectory Δq checkpoints (created during training)
+│
+├── run_report_generation.sh       # Script to generate all report results
+├── requirements.txt               # Python dependencies
+└── README.md                      # This file
 ```
 
 ---
@@ -168,7 +184,7 @@ python src/eval_ik_models.py \
   --use-orientation \
   --mlp-ckpt mlp_ik_traj_checkpoints/ikmlp-epoch=AAA-val_loss=BBB.ckpt \
   --gnn-ckpt gnn_ik_checkpoints/gnnik-epoch=XXX-val_loss=YYY.ckpt \
-  --num-samples 200
+  --num-samples 0
 ```
 
 **Note:** Evaluation uses the **TEST set** (same train/val/test split as training: seed=42, 15%/15% splits). The `--num-samples` parameter randomly samples from the test set. Set to `0` to evaluate on the entire test set.
