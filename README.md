@@ -33,10 +33,12 @@ data/                     # CSV datasets generated via PyBullet
 src/
   kuka_fk_dataset.py      # FK data generator
   classical_ik.py         # FK, Jacobian, DLS IK, PyBullet IK
+  data_utils.py           # Shared data loading utilities
   mlp_ik.py               # MLP IK model
   gnn_ik.py               # GNN Δq model
   eval_ik_models.py       # Evaluation (joint + EE)
   trajectory_rollout.py   # Multi-step rollout experiments
+  grid_search.py          # Hyperparameter grid search utility
 notebooks/                # Optional analysis & plots
 ```
 
@@ -64,8 +66,8 @@ Produces:
 ```bash
 python src/kuka_fk_dataset.py \
   --data-type traj \
-  --traj-length 15 \
-  --num-samples 1000 \
+  --num-trajectories 200 \
+  --steps-per-trajectory 50 \
   --include-orientation \
   --out-prefix data/kuka_traj_dataset
 ```
