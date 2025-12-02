@@ -3,6 +3,7 @@ import math
 import random
 import argparse
 from pathlib import Path
+from typing import List
 
 import numpy as np
 import pybullet as p

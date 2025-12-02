@@ -103,6 +103,9 @@ def eval_mlp_single(
     kuka_uid: int,
     joint_indices,
     ee_link_index: int,
+    val_frac: float = 0.15,
+    test_frac: float = 0.15,
+    seed: int = 42,
 ) -> Dict[str, Any]:
     """
     Evaluate MLP IK model trained in single-shot mode.
@@ -119,6 +122,9 @@ def eval_mlp_single(
       - joint MSE / MAE vs q
       - EE position MSE / MAE via FK
       - movement ‖Δq‖ relative to some reference (we'll compute vs true q for consistency)
+    
+    Uses the same train/val/test split as training (seed=42, val_frac=0.15, test_frac=0.15)
+    and evaluates only on the TEST set.
     """
     csv_path = Path(csv_path)
     ckpt_path = Path(ckpt_path)
@@ -126,13 +132,33 @@ def eval_mlp_single(
     X, y, pose_dim, n_joints = load_ik_csv(csv_path, use_orientation=use_orientation)
     assert n_joints == 7
     N = X.shape[0]
-    num_samples = min(num_samples, N)
-
-    rng = np.random.default_rng(0)
-    idx = rng.choice(N, size=num_samples, replace=False)
-
-    X_sub = X[idx]          # poses
-    q_true_sub = y[idx]     # ground-truth joints
+    
+    # Use the same split as training
+    rng = np.random.default_rng(seed)
+    indices = np.arange(N)
+    rng.shuffle(indices)
+    
+    n_val = int(val_frac * N)
+    n_test = int(test_frac * N)
+    n_train = N - n_val - n_test
+    
+    train_idx = indices[:n_train]
+    val_idx = indices[n_train:n_train + n_val]
+    test_idx = indices[n_train + n_val:]
+    
+    # Evaluate only on TEST set
+    X_test = X[test_idx]
+    y_test = y[test_idx]
+    
+    # Sample from test set if num_samples is specified
+    if num_samples > 0 and num_samples < len(X_test):
+        rng_sample = np.random.default_rng(0)
+        sample_idx = rng_sample.choice(len(X_test), size=num_samples, replace=False)
+        X_sub = X_test[sample_idx]
+        q_true_sub = y_test[sample_idx]
+    else:
+        X_sub = X_test
+        q_true_sub = y_test
 
     mlp: IKMLP = IKMLP.load_from_checkpoint(ckpt_path)
     mlp.to(device)
@@ -168,7 +194,7 @@ def eval_mlp_single(
         "mean_dq_L1": mean_dq_L1,
         "ee_mse": ee_mse,
         "ee_mae": ee_mae,
-        "num_samples": int(num_samples),
+        "num_samples": int(len(X_sub)),
         "mode": "single",
     }
 
@@ -186,6 +212,9 @@ def eval_mlp_traj(
     kuka_uid: int,
     joint_indices,
     ee_link_index: int,
+    val_frac: float = 0.15,
+    test_frac: float = 0.15,
+    seed: int = 42,
 ) -> Dict[str, Any]:
     """
     Evaluate MLP IK model trained in trajectory mode.
@@ -205,6 +234,9 @@ def eval_mlp_traj(
       - joint MSE / MAE vs q_curr
       - EE position MSE / MAE via FK
       - movement ‖Δq‖
+    
+    Uses the same train/val/test split as training (seed=42, val_frac=0.15, test_frac=0.15)
+    and evaluates only on the TEST set.
     """
     csv_path = Path(csv_path)
     ckpt_path = Path(ckpt_path)
@@ -213,14 +245,36 @@ def eval_mlp_traj(
         csv_path, use_orientation=use_orientation
     )
     N = poses.shape[0]
-    num_samples = min(num_samples, N)
-
-    rng = np.random.default_rng(0)
-    idx = rng.choice(N, size=num_samples, replace=False)
-
-    poses_sub = poses[idx]
-    q_prev_sub = q_prev[idx]
-    q_curr_sub = q_curr[idx]
+    
+    # Use the same split as training
+    rng = np.random.default_rng(seed)
+    indices = np.arange(N)
+    rng.shuffle(indices)
+    
+    n_val = int(val_frac * N)
+    n_test = int(test_frac * N)
+    n_train = N - n_val - n_test
+    
+    train_idx = indices[:n_train]
+    val_idx = indices[n_train:n_train + n_val]
+    test_idx = indices[n_train + n_val:]
+    
+    # Evaluate only on TEST set
+    poses_test = poses[test_idx]
+    q_prev_test = q_prev[test_idx]
+    q_curr_test = q_curr[test_idx]
+    
+    # Sample from test set if num_samples is specified
+    if num_samples > 0 and num_samples < len(poses_test):
+        rng_sample = np.random.default_rng(0)
+        sample_idx = rng_sample.choice(len(poses_test), size=num_samples, replace=False)
+        poses_sub = poses_test[sample_idx]
+        q_prev_sub = q_prev_test[sample_idx]
+        q_curr_sub = q_curr_test[sample_idx]
+    else:
+        poses_sub = poses_test
+        q_prev_sub = q_prev_test
+        q_curr_sub = q_curr_test
 
     n_joints = q_prev_sub.shape[1]
     assert n_joints == 7
@@ -277,7 +331,7 @@ def eval_mlp_traj(
         "mean_dq_L1": mean_dq_L1,
         "ee_mse": ee_mse,
         "ee_mae": ee_mae,
-        "num_samples": int(num_samples),
+        "num_samples": int(len(poses_sub)),
         "mode": "traj",
     }
 
@@ -296,9 +350,15 @@ def eval_gnn_traj(
     kuka_uid: int,
     joint_indices,
     ee_link_index: int,
+    val_frac: float = 0.15,
+    test_frac: float = 0.15,
+    seed: int = 42,
 ) -> Dict[str, Any]:
     """
     Evaluate GNN IK model trained in trajectory Δq mode.
+    
+    Uses the same train/val/test split as training (seed=42, val_frac=0.15, test_frac=0.15)
+    and evaluates only on the TEST set.
     """
     csv_path = Path(csv_path)
     ckpt_path = Path(ckpt_path)
@@ -307,19 +367,41 @@ def eval_gnn_traj(
         csv_path, use_orientation=use_orientation
     )
     N = poses.shape[0]
-    num_samples = min(num_samples, N)
-
-    rng = np.random.default_rng(0)
-    idx = rng.choice(N, size=num_samples, replace=False)
-
-    poses_sub = poses[idx]
-    q_prev_sub = q_prev[idx]
-    q_curr_sub = q_curr[idx]
+    
+    # Use the same split as training
+    rng = np.random.default_rng(seed)
+    indices = np.arange(N)
+    rng.shuffle(indices)
+    
+    n_val = int(val_frac * N)
+    n_test = int(test_frac * N)
+    n_train = N - n_val - n_test
+    
+    train_idx = indices[:n_train]
+    val_idx = indices[n_train:n_train + n_val]
+    test_idx = indices[n_train + n_val:]
+    
+    # Evaluate only on TEST set
+    poses_test = poses[test_idx]
+    q_prev_test = q_prev[test_idx]
+    q_curr_test = q_curr[test_idx]
+    
+    # Sample from test set if num_samples is specified
+    if num_samples > 0 and num_samples < len(poses_test):
+        rng_sample = np.random.default_rng(0)
+        sample_idx = rng_sample.choice(len(poses_test), size=num_samples, replace=False)
+        poses_sub = poses_test[sample_idx]
+        q_prev_sub = q_prev_test[sample_idx]
+        q_curr_sub = q_curr_test[sample_idx]
+    else:
+        poses_sub = poses_test
+        q_prev_sub = q_prev_test
+        q_curr_sub = q_curr_test
 
     dataset = KukaTrajGraphDataset(poses_sub, q_prev_sub, q_curr_sub, pose_dim)
     loader = GeoDataLoader(dataset, batch_size=batch_size, shuffle=False)
 
-    gnn: IK_GNN = IK_GNN.load_from_checkpoint(ckpt_path)
+    gnn: IK_GNN = IK_GNN.load_from_checkpoint(str(ckpt_path), map_location="cpu")
     gnn.to(device)
     gnn.eval()
 
@@ -356,7 +438,7 @@ def eval_gnn_traj(
         "mean_dq_L1": mean_dq_L1,
         "ee_mse": ee_mse,
         "ee_mae": ee_mae,
-        "num_samples": int(num_samples),
+        "num_samples": int(len(poses_sub)),
     }
 
 
@@ -396,7 +478,9 @@ def parse_args() -> argparse.Namespace:
         "--num-samples",
         type=int,
         default=200,
-        help="Number of random samples from the CSV for evaluation.",
+        help="Number of random samples from the TEST set for evaluation. "
+             "Uses same train/val/test split as training (seed=42, 15%/15% splits). "
+             "Set to 0 to use entire test set.",
     )
     ap.add_argument(
         "--gnn-batch-size",
@@ -434,13 +518,22 @@ def main() -> None:
 
     # --- MLP evaluation (auto single vs traj) ---
     if args.mlp_ckpt is not None:
-        mlp: IKMLP = IKMLP.load_from_checkpoint(args.mlp_ckpt)
+        ckpt_path = Path(args.mlp_ckpt)
+        if not ckpt_path.exists():
+            raise FileNotFoundError(
+                f"MLP checkpoint not found: {ckpt_path}\n"
+                f"Please provide a valid checkpoint path. Available checkpoints:\n"
+                f"  - mlp_ik_checkpoints/\n"
+                f"  - mlp_ik_traj_checkpoints/"
+            )
+        mlp: IKMLP = IKMLP.load_from_checkpoint(str(ckpt_path), map_location="cpu")
         predict_delta = bool(getattr(mlp.hparams, "predict_delta", False))
         mlp.cpu()  # we reload inside each eval on the proper device anyway
 
         print("\n=== Evaluating MLP IK model ===")
         if predict_delta:
             print("[MLP] Detected trajectory Δq mode (predict_delta=True)")
+            print("[MLP] Evaluating on TEST set (using same split as training: seed=42, 15%/15%)")
             metrics = eval_mlp_traj(
                 csv_path=args.csv_path,
                 use_orientation=args.use_orientation,
@@ -453,6 +546,7 @@ def main() -> None:
             )
         else:
             print("[MLP] Detected single-shot mode (predict_delta=False)")
+            print("[MLP] Evaluating on TEST set (using same split as training: seed=42, 15%/15%)")
             metrics = eval_mlp_single(
                 csv_path=args.csv_path,
                 use_orientation=args.use_orientation,
@@ -472,7 +566,15 @@ def main() -> None:
 
     # --- GNN evaluation (traj only) ---
     if args.gnn_ckpt is not None:
+        ckpt_path = Path(args.gnn_ckpt)
+        if not ckpt_path.exists():
+            raise FileNotFoundError(
+                f"GNN checkpoint not found: {ckpt_path}\n"
+                f"Please provide a valid checkpoint path. Available checkpoints:\n"
+                f"  - gnn_ik_checkpoints/"
+            )
         print("\n=== Evaluating GNN (trajectory Δq) IK model ===")
+        print("[GNN] Evaluating on TEST set (using same split as training: seed=42, 15%/15%)")
         gnn_metrics = eval_gnn_traj(
             csv_path=args.csv_path,
             use_orientation=args.use_orientation,
