@@ -10,7 +10,7 @@ We include:
 - A **GNN IK model** that exploits the kinematic chain
 - Tools for evaluating joint-space & end-effector errors
 - Sequential **trajectory rollout** for long-horizon stability
-- Classical IK solvers (FK, Jacobian, Damped Least Squares)
+- Classical IK solvers (Jacobian, Damped Least Squares)
 
 ---
 
