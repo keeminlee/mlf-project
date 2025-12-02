@@ -46,12 +46,12 @@ notebooks/                # Optional analysis & plots
 
 ### **Single-shot FK dataset**
 
-\`\`\`bash
+```bash
 python src/kuka_fk_dataset.py \
   --num-samples 5000 \
   --include-orientation \
   --out-prefix data/kuka_fk_dataset
-\`\`\`
+```
 
 Produces:
 
@@ -61,14 +61,14 @@ Produces:
 
 ### **Trajectory dataset (Δq training)**
 
-\`\`\`bash
+```bash
 python src/kuka_fk_dataset.py \
   --data-type traj \
   --traj-length 15 \
   --num-samples 1000 \
   --include-orientation \
   --out-prefix data/kuka_traj_dataset
-\`\`\`
+```
 
 Produces:
 
@@ -86,7 +86,7 @@ Contains:
 ### **A. Single-shot MLP**  
 Input: pose → Output: absolute joint configuration
 
-\`\`\`bash
+```bash
 python src/mlp_ik.py \
   --csv-path data/kuka_fk_dataset.csv \
   --use-orientation \
@@ -97,7 +97,7 @@ python src/mlp_ik.py \
   --weight-decay 1e-4 \
   --dropout 0.1 \
   --accelerator auto
-\`\`\`
+```
 
 Checkpoints saved to:
 
@@ -108,7 +108,7 @@ Checkpoints saved to:
 ### **B. Trajectory Δq MLP**  
 Input: [pose, q_prev] → Output: Δq
 
-\`\`\`bash
+```bash
 python src/mlp_ik.py \
   --csv-path data/kuka_traj_dataset_traj.csv \
   --use-orientation \
@@ -121,7 +121,7 @@ python src/mlp_ik.py \
   --dropout 0.1 \
   --accelerator auto \
   --lambda-movement 0.1
-\`\`\`
+```
 
 Checkpoints saved to:
 
@@ -131,7 +131,7 @@ Checkpoints saved to:
 
 ## 🔗 3. Train GNN IK Model (Δq Only)
 
-\`\`\`bash
+```bash
 python src/gnn_ik.py \
   --csv-path data/kuka_traj_dataset_traj.csv \
   --use-orientation \
@@ -141,7 +141,7 @@ python src/gnn_ik.py \
   --batch-size 128 \
   --max-epochs 100 \
   --accelerator auto
-\`\`\`
+```
 
 Checkpoints saved to:
 
@@ -152,14 +152,14 @@ Checkpoints saved to:
 ## 📊 4. Evaluate MLP vs GNN  
 (Joint error + End-Effector error)
 
-\`\`\`bash
+```bash
 python src/eval_ik_models.py \
   --csv-path data/kuka_traj_dataset_traj.csv \
   --use-orientation \
   --mlp-ckpt mlp_ik_traj_checkpoints/ikmlp-epoch=XXX-val_loss=YYY.ckpt \
   --gnn-ckpt gnn_ik_checkpoints/gnnik-epoch=AAA-val_loss=BBB.ckpt \
   --num-samples 200
-\`\`\`
+```
 
 Computes:
 
@@ -172,7 +172,7 @@ Computes:
 
 ## 🌀 5. Sequential Trajectory Rollout
 
-\`\`\`bash
+```bash
 python src/trajectory_rollout.py \
   --csv-path data/kuka_traj_dataset_traj.csv \
   --use-orientation \
@@ -181,7 +181,7 @@ python src/trajectory_rollout.py \
   --num-trajectories 10 \
   --traj-length 30 \
   --device auto
-\`\`\`
+```
 
 Outputs:
 
