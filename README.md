@@ -1,5 +1,5 @@
 # KUKA iiwa Inverse Kinematics Learning Project  
-**Machine Learning for Robotics — Final Project**
+**ML Frontiers — Final Project**
 
 This repository provides a complete pipeline for learning **inverse kinematics (IK)** for the 7-DoF **KUKA iiwa** robotic arm.
 
