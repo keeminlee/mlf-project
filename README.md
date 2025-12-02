@@ -54,6 +54,7 @@ mlf-project/
 ├── gnn_ik_checkpoints/            # GNN trajectory Δq checkpoints (created during training)
 │
 ├── run_report_generation.sh       # Script to generate all report results
+├── train_lambda_sweep.sh          # Script to train models with different lambda values
 ├── requirements.txt               # Python dependencies
 └── README.md                      # This file
 ```
@@ -179,6 +180,13 @@ Checkpoints saved to:
 (Joint error + End-Effector error)
 
 ```bash
+# Simplest usage - auto-finds best checkpoints:
+python src/eval_ik_models.py \
+  --csv-path data/kuka_traj_dataset_traj.csv \
+  --use-orientation \
+  --num-samples 0
+
+# Or manually specify checkpoints (optional):
 python src/eval_ik_models.py \
   --csv-path data/kuka_traj_dataset_traj.csv \
   --use-orientation \
@@ -201,6 +209,15 @@ Computes:
 ## 🌀 5. Sequential Trajectory Rollout
 
 ```bash
+# Simplest usage - auto-finds best checkpoints:
+python src/trajectory_rollout.py \
+  --csv-path data/kuka_traj_dataset_traj.csv \
+  --use-orientation \
+  --num-trajectories 10 \
+  --traj-length 30 \
+  --device auto
+
+# Or manually specify checkpoints (optional):
 python src/trajectory_rollout.py \
   --csv-path data/kuka_traj_dataset_traj.csv \
   --use-orientation \
@@ -276,13 +293,22 @@ print('DLS info:', info)
 
 ## 📊 7. Generate Report Results and Plots
 
-Generate all results and plots for the report:
+Generate all results and plots for the report. **Checkpoints are automatically found** - no need to manually specify paths!
 
 ```bash
-# Update checkpoint paths in run_report_generation.sh first, then:
-./run_report_generation.sh
+# Simplest usage - auto-finds best checkpoints:
+python src/generate_report_results.py \
+  --csv-path data/kuka_traj_dataset_traj.csv \
+  --results-dir results
 
-# Or run directly:
+# Or specify checkpoint directories:
+python src/generate_report_results.py \
+  --csv-path data/kuka_traj_dataset_traj.csv \
+  --mlp-checkpoint-dir mlp_ik_traj_checkpoints \
+  --gnn-checkpoint-dir gnn_ik_checkpoints \
+  --results-dir results
+
+# Or manually specify checkpoints (optional):
 python src/generate_report_results.py \
   --csv-path data/kuka_traj_dataset_traj.csv \
   --mlp-ckpt mlp_ik_traj_checkpoints/ikmlp-epoch=AAA-val_loss=BBB.ckpt \
@@ -290,22 +316,51 @@ python src/generate_report_results.py \
   --results-dir results
 ```
 
+**For full lambda sweep:**
+
+1. **Train models with different lambda values:**
+```bash
+# Train all models with λ = 0.001, 0.01, 0.1, 1.0 (logarithmic scale: 1e-3, 1e-2, 1e-1, 1e0)
+./train_lambda_sweep.sh
+```
+
+2. **Run lambda sweep analysis (auto-finds checkpoints):**
+```bash
+# The script automatically finds the best checkpoint for each lambda value!
+python src/generate_report_results.py \
+  --csv-path data/kuka_traj_dataset_traj.csv \
+  --results-dir results
+```
+
+The script will:
+- Automatically find the best checkpoint (lowest validation loss) for each lambda value
+- Generate lambda sweep plots showing accuracy vs smoothness tradeoff
+- No manual checkpoint path specification needed!
+
 This generates:
-- **Trajectory rollout evaluation**: Stability and cumulative EE drift over long trajectories
-  - Plot: EE error over trajectory steps (mean ± std)
-  - Plot: Cumulative EE drift over trajectories
-  - Data: Statistics (mean/std/max EE error, cumulative drift, mean Δq norm)
-- **Lambda sweep results**: Accuracy vs smoothness tradeoff (requires models trained with different λ values)
-  - Plot: Joint MSE vs Lambda
-  - Plot: EE MSE vs Lambda
-  - Plot: Mean Δq (smoothness) vs Lambda
-  - Plot: Accuracy vs Smoothness tradeoff
-  - Data: Metrics for each lambda value
-- **All plots for report** (includes classical IK baselines):
-  - Joint MSE/MAE comparison (MLP, GNN, DLS, PyBullet)
-  - EE MSE/MAE comparison (MLP, GNN, DLS, PyBullet)
-  - Mean Δq per model (MLP, GNN, DLS, PyBullet)
-  - Boxplot comparing movement magnitudes (MLP, GNN)
+
+1. **Trajectory rollout evaluation**: Sequential test where models predict full q₀ → q₁ → ... → qₜ trajectories
+   - Shows stability and cumulative EE drift over long trajectories
+   - Plot: EE error over trajectory steps (mean ± std across trajectories)
+   - Plot: Cumulative EE drift over trajectories
+   - Data: Statistics (mean/std/max EE error, cumulative drift, mean Δq norm)
+   - **Great figure for the report!**
+
+2. **Lambda sweep results**: Accuracy vs smoothness tradeoff
+   - **For full sweep**: Train models with λ = 0.001, 0.01, 0.1, 1.0 (logarithmic scale: 1e-3, 1e-2, 1e-1, 1e0)
+   - Use `./train_lambda_sweep.sh` to train all models automatically
+   - Plot: Joint MSE vs Lambda (curve if multiple λ values, bar if single)
+   - Plot: EE MSE vs Lambda
+   - Plot: Mean Δq (smoothness) vs Lambda
+   - Plot: Accuracy vs Smoothness tradeoff
+   - Data: Metrics for each lambda value
+   - **Should be super quick to run!**
+
+3. **All plots for report** (includes classical IK baselines):
+   - Joint MSE/MAE comparison (MLP, GNN, DLS, PyBullet)
+   - EE MSE/MAE comparison (MLP, GNN, DLS, PyBullet)
+   - Mean Δq per model (MLP, GNN, DLS, PyBullet)
+   - Boxplot comparing movement magnitudes (MLP, GNN)
 
 Results are saved to `results/` directory:
 - `results/plots/` - All PNG plots (300 DPI, ready for report)

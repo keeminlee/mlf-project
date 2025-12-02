@@ -1,0 +1,8 @@
+dropout: 0.1
+hidden_dim: 64
+lambda_movement: 0.1
+learning_rate: 0.001
+node_input_dim: 9
+num_layers: 3
+output_dim: 7
+weight_decay: 0.0001

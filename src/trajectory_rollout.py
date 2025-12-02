@@ -40,6 +40,7 @@ from torch_geometric.data import Data
 from gnn_ik import IK_GNN
 from data_utils import load_traj_csv
 from mlp_ik import IKMLP
+from checkpoint_utils import auto_find_checkpoints
 from classical_ik import (
     connect_pybullet,
     load_kuka,
@@ -269,8 +270,8 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument(
         "--gnn-ckpt",
         type=str,
-        required=True,
-        help="Path to GNN checkpoint (.ckpt).",
+        default=None,
+        help="Path to GNN checkpoint (.ckpt). Auto-finds if not provided.",
     )
     ap.add_argument(
         "--num-trajectories",
@@ -297,6 +298,34 @@ def main() -> None:
     args = parse_args()
     device = get_device(args.device)
 
+    # Auto-find checkpoints if not provided
+    mlp_ckpt_path = args.mlp_ckpt
+    gnn_ckpt_path = args.gnn_ckpt
+    
+    if mlp_ckpt_path is None or gnn_ckpt_path is None:
+        print("Auto-finding checkpoints...")
+        auto_mlp, auto_gnn = auto_find_checkpoints(
+            mlp_checkpoint_dir="mlp_ik_traj_checkpoints",
+            gnn_checkpoint_dir="gnn_ik_checkpoints",
+            model_type="traj",
+        )
+        if mlp_ckpt_path is None:
+            mlp_ckpt_path = auto_mlp
+            if mlp_ckpt_path:
+                print(f"  Found MLP checkpoint: {mlp_ckpt_path}")
+        if gnn_ckpt_path is None:
+            gnn_ckpt_path = auto_gnn
+            if gnn_ckpt_path:
+                print(f"  Found GNN checkpoint: {gnn_ckpt_path}")
+    
+    if gnn_ckpt_path is None:
+        raise ValueError(
+            "GNN checkpoint required but not found! Please either:\n"
+            "  1. Provide checkpoint path with --gnn-ckpt\n"
+            "  2. Train GNN model first (see README Section 3)\n"
+            "  3. Check that gnn_ik_checkpoints/ directory exists"
+        )
+
     # Load trajectory dataset (poses, q_prev, q_curr)
     poses, q_prev, q_curr, pose_dim = load_traj_csv(
         args.csv_path,
@@ -315,7 +344,7 @@ def main() -> None:
     # Models
     # ------
     # GNN
-    gnn_ckpt = Path(args.gnn_ckpt)
+    gnn_ckpt = Path(gnn_ckpt_path)
     # Need node_input_dim consistent with training: pose_dim + 2
     node_input_dim = pose_dim + 2
     gnn: IK_GNN = IK_GNN.load_from_checkpoint(
@@ -327,8 +356,8 @@ def main() -> None:
 
     # MLP (optional)
     mlp: Optional[IKMLP] = None
-    if args.mlp_ckpt is not None:
-        mlp_ckpt = Path(args.mlp_ckpt)
+    if mlp_ckpt_path is not None:
+        mlp_ckpt = Path(mlp_ckpt_path)
         mlp = IKMLP.load_from_checkpoint(mlp_ckpt)
         mlp.to(device)
 

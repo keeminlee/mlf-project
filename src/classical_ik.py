@@ -224,7 +224,7 @@ def compute_jacobian(
 
     # Compute Jacobian
     zero_vec = [0.0, 0.0, 0.0]
-    J_lin, J_ang, _ = p.calculateJacobian(
+    J_lin, J_ang = p.calculateJacobian(
         bodyUniqueId=body_uid,
         linkIndex=ee_link_index,
         localPosition=zero_vec,

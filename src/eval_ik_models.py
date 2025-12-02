@@ -47,6 +47,7 @@ from gnn_ik import (
     KukaTrajGraphDataset,
 )
 from data_utils import load_ik_csv, load_traj_csv
+from checkpoint_utils import auto_find_checkpoints
 from classical_ik import (
     connect_pybullet,
     load_kuka,
@@ -511,14 +512,39 @@ def main() -> None:
     args = parse_args()
     device = get_device(args.device)
 
-    if args.mlp_ckpt is None and args.gnn_ckpt is None:
-        raise ValueError("At least one of --mlp-ckpt or --gnn-ckpt must be provided.")
+    # Auto-find checkpoints if not provided
+    mlp_ckpt = args.mlp_ckpt
+    gnn_ckpt = args.gnn_ckpt
+    
+    if mlp_ckpt is None or gnn_ckpt is None:
+        print("Auto-finding checkpoints...")
+        auto_mlp, auto_gnn = auto_find_checkpoints(
+            mlp_checkpoint_dir="mlp_ik_traj_checkpoints",
+            gnn_checkpoint_dir="gnn_ik_checkpoints",
+            model_type="traj",
+        )
+        if mlp_ckpt is None:
+            mlp_ckpt = auto_mlp
+            if mlp_ckpt:
+                print(f"  Found MLP checkpoint: {mlp_ckpt}")
+        if gnn_ckpt is None:
+            gnn_ckpt = auto_gnn
+            if gnn_ckpt:
+                print(f"  Found GNN checkpoint: {gnn_ckpt}")
+    
+    if mlp_ckpt is None and gnn_ckpt is None:
+        raise ValueError(
+            "No checkpoints found! Please either:\n"
+            "  1. Provide checkpoint paths with --mlp-ckpt and/or --gnn-ckpt\n"
+            "  2. Train models first (see README Sections 2-3)\n"
+            "  3. Check that checkpoint directories exist: mlp_ik_traj_checkpoints/, gnn_ik_checkpoints/"
+        )
 
     client_id, kuka_uid, joint_indices, ee_link_index = setup_pybullet_fk()
 
     # --- MLP evaluation (auto single vs traj) ---
-    if args.mlp_ckpt is not None:
-        ckpt_path = Path(args.mlp_ckpt)
+    if mlp_ckpt is not None:
+        ckpt_path = Path(mlp_ckpt)
         if not ckpt_path.exists():
             raise FileNotFoundError(
                 f"MLP checkpoint not found: {ckpt_path}\n"
@@ -531,13 +557,14 @@ def main() -> None:
         mlp.cpu()  # we reload inside each eval on the proper device anyway
 
         print("\n=== Evaluating MLP IK model ===")
+        print(f"[MLP] Checkpoint: {ckpt_path}")
         if predict_delta:
             print("[MLP] Detected trajectory Δq mode (predict_delta=True)")
             print("[MLP] Evaluating on TEST set (using same split as training: seed=42, 15%/15%)")
             metrics = eval_mlp_traj(
                 csv_path=args.csv_path,
                 use_orientation=args.use_orientation,
-                ckpt_path=args.mlp_ckpt,
+                ckpt_path=mlp_ckpt,
                 num_samples=args.num_samples,
                 device=device,
                 kuka_uid=kuka_uid,
@@ -550,7 +577,7 @@ def main() -> None:
             metrics = eval_mlp_single(
                 csv_path=args.csv_path,
                 use_orientation=args.use_orientation,
-                ckpt_path=args.mlp_ckpt,
+                ckpt_path=mlp_ckpt,
                 num_samples=args.num_samples,
                 device=device,
                 kuka_uid=kuka_uid,
@@ -565,8 +592,8 @@ def main() -> None:
                 print(f"MLP {k:>12}: {v}")
 
     # --- GNN evaluation (traj only) ---
-    if args.gnn_ckpt is not None:
-        ckpt_path = Path(args.gnn_ckpt)
+    if gnn_ckpt is not None:
+        ckpt_path = Path(gnn_ckpt)
         if not ckpt_path.exists():
             raise FileNotFoundError(
                 f"GNN checkpoint not found: {ckpt_path}\n"
@@ -574,11 +601,12 @@ def main() -> None:
                 f"  - gnn_ik_checkpoints/"
             )
         print("\n=== Evaluating GNN (trajectory Δq) IK model ===")
+        print(f"[GNN] Checkpoint: {ckpt_path}")
         print("[GNN] Evaluating on TEST set (using same split as training: seed=42, 15%/15%)")
         gnn_metrics = eval_gnn_traj(
             csv_path=args.csv_path,
             use_orientation=args.use_orientation,
-            ckpt_path=args.gnn_ckpt,
+            ckpt_path=gnn_ckpt,
             num_samples=args.num_samples,
             batch_size=args.gnn_batch_size,
             device=device,

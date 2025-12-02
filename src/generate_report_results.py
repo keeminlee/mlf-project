@@ -25,7 +25,7 @@ import json
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 import pandas as pd
 
 from eval_ik_models import (
@@ -44,6 +44,11 @@ from classical_ik import (
     ik_damped_least_squares,
     ik_pybullet_builtin,
     get_joint_limits,
+)
+from checkpoint_utils import (
+    find_all_lambda_checkpoints,
+    auto_find_checkpoints,
+    find_best_checkpoint,
 )
 import torch
 
@@ -257,23 +262,29 @@ def run_trajectory_rollout_eval(
 
 def run_lambda_sweep(
     csv_path: str,
-    base_mlp_ckpt: str,
-    base_gnn_ckpt: str,
-    lambda_values: List[float] = [0.01, 0.1, 0.2],
+    mlp_checkpoints: Optional[Dict[float, str]] = None,
+    gnn_checkpoints: Optional[Dict[float, str]] = None,
+    base_mlp_ckpt: Optional[str] = None,
+    base_gnn_ckpt: Optional[str] = None,
+    auto_find: bool = True,
+    lambda_values: List[float] = [0.001, 0.01, 0.1, 1.0],
     num_samples: int = 200,
     device: str = "auto",
     results_dir: Path = Path("results"),
 ) -> Dict[str, Any]:
     """
     Run lambda sweep to show accuracy vs smoothness tradeoff.
-    Note: This requires retraining models with different lambda values.
-    For now, we'll evaluate existing models and note lambda values.
+    
+    Args:
+        mlp_checkpoints: Dict mapping lambda values to checkpoint paths for MLP
+                        e.g., {0.01: "path1.ckpt", 0.1: "path2.ckpt", 0.2: "path3.ckpt"}
+        gnn_checkpoints: Dict mapping lambda values to checkpoint paths for GNN
+        base_mlp_ckpt: Single MLP checkpoint (fallback if mlp_checkpoints not provided)
+        base_gnn_ckpt: Single GNN checkpoint (fallback if gnn_checkpoints not provided)
     """
     print("\n" + "="*60)
     print("LAMBDA SWEEP EVALUATION")
     print("="*60)
-    print("Note: This requires models trained with different lambda values.")
-    print("Evaluating available checkpoints...")
     
     results_dir.mkdir(parents=True, exist_ok=True)
     data_dir = results_dir / "data"
@@ -282,108 +293,234 @@ def run_lambda_sweep(
     device_obj = get_device(device)
     client_id, kuka_uid, joint_indices, ee_link_index = setup_pybullet_fk()
     
-    # Load base models to get their lambda values
-    mlp = IKMLP.load_from_checkpoint(str(base_mlp_ckpt), map_location="cpu")
-    gnn = IK_GNN.load_from_checkpoint(
-        str(base_gnn_ckpt),
-        map_location="cpu"
-    )
+    # Auto-find checkpoints if requested and not provided
+    if auto_find and mlp_checkpoints is None and gnn_checkpoints is None:
+        print("\nAuto-finding checkpoints for lambda sweep...")
+        auto_mlp, auto_gnn = find_all_lambda_checkpoints(
+            mlp_checkpoint_dir="mlp_ik_traj_checkpoints",
+            gnn_checkpoint_dir="gnn_ik_checkpoints",
+            lambda_values=lambda_values,
+        )
+        
+        # Filter out None values and use what we found
+        if any(auto_mlp.values()):
+            mlp_checkpoints = {k: v for k, v in auto_mlp.items() if v is not None}
+            if mlp_checkpoints:
+                print(f"Found MLP checkpoints for {len(mlp_checkpoints)} lambda values")
+        if any(auto_gnn.values()):
+            gnn_checkpoints = {k: v for k, v in auto_gnn.items() if v is not None}
+            if gnn_checkpoints:
+                print(f"Found GNN checkpoints for {len(gnn_checkpoints)} lambda values")
     
-    mlp_lambda = getattr(mlp.hparams, "lambda_movement", 0.1)
-    gnn_lambda = getattr(gnn.hparams, "lambda_movement", 0.1)
+    # Collect all checkpoints to evaluate
+    all_mlp_results = {}
+    all_gnn_results = {}
     
-    print(f"MLP lambda: {mlp_lambda}")
-    print(f"GNN lambda: {gnn_lambda}")
+    # Evaluate MLP checkpoints
+    if mlp_checkpoints:
+        print(f"\nEvaluating MLP models with {len(mlp_checkpoints)} lambda values...")
+        for lam, ckpt_path in sorted(mlp_checkpoints.items()):
+            print(f"  λ={lam}: {ckpt_path}")
+            metrics = eval_mlp_traj(
+                csv_path=csv_path,
+                use_orientation=True,
+                ckpt_path=ckpt_path,
+                num_samples=num_samples,
+                device=device_obj,
+                kuka_uid=kuka_uid,
+                joint_indices=joint_indices,
+                ee_link_index=ee_link_index,
+            )
+            all_mlp_results[lam] = {**metrics, "lambda": lam}
+    elif base_mlp_ckpt:
+        print("\nEvaluating single MLP checkpoint...")
+        mlp = IKMLP.load_from_checkpoint(str(base_mlp_ckpt), map_location="cpu")
+        mlp_lambda = getattr(mlp.hparams, "lambda_movement", 0.1)
+        print(f"  λ={mlp_lambda}: {base_mlp_ckpt}")
+        metrics = eval_mlp_traj(
+            csv_path=csv_path,
+            use_orientation=True,
+            ckpt_path=base_mlp_ckpt,
+            num_samples=num_samples,
+            device=device_obj,
+            kuka_uid=kuka_uid,
+            joint_indices=joint_indices,
+            ee_link_index=ee_link_index,
+        )
+        all_mlp_results[mlp_lambda] = {**metrics, "lambda": mlp_lambda}
     
-    # Evaluate current models
-    results = {}
-    
-    mlp_metrics = eval_mlp_traj(
-        csv_path=csv_path,
-        use_orientation=True,
-        ckpt_path=base_mlp_ckpt,
-        num_samples=num_samples,
-        device=device_obj,
-        kuka_uid=kuka_uid,
-        joint_indices=joint_indices,
-        ee_link_index=ee_link_index,
-    )
-    
-    gnn_metrics = eval_gnn_traj(
-        csv_path=csv_path,
-        use_orientation=True,
-        ckpt_path=base_gnn_ckpt,
-        num_samples=num_samples,
-        batch_size=64,
-        device=device_obj,
-        kuka_uid=kuka_uid,
-        joint_indices=joint_indices,
-        ee_link_index=ee_link_index,
-    )
-    
-    results["mlp"] = {**mlp_metrics, "lambda": mlp_lambda}
-    results["gnn"] = {**gnn_metrics, "lambda": gnn_lambda}
+    # Evaluate GNN checkpoints
+    if gnn_checkpoints:
+        print(f"\nEvaluating GNN models with {len(gnn_checkpoints)} lambda values...")
+        for lam, ckpt_path in sorted(gnn_checkpoints.items()):
+            print(f"  λ={lam}: {ckpt_path}")
+            metrics = eval_gnn_traj(
+                csv_path=csv_path,
+                use_orientation=True,
+                ckpt_path=ckpt_path,
+                num_samples=num_samples,
+                batch_size=64,
+                device=device_obj,
+                kuka_uid=kuka_uid,
+                joint_indices=joint_indices,
+                ee_link_index=ee_link_index,
+            )
+            all_gnn_results[lam] = {**metrics, "lambda": lam}
+    elif base_gnn_ckpt:
+        print("\nEvaluating single GNN checkpoint...")
+        gnn = IK_GNN.load_from_checkpoint(str(base_gnn_ckpt), map_location="cpu")
+        gnn_lambda = getattr(gnn.hparams, "lambda_movement", 0.1)
+        print(f"  λ={gnn_lambda}: {base_gnn_ckpt}")
+        metrics = eval_gnn_traj(
+            csv_path=csv_path,
+            use_orientation=True,
+            ckpt_path=base_gnn_ckpt,
+            num_samples=num_samples,
+            batch_size=64,
+            device=device_obj,
+            kuka_uid=kuka_uid,
+            joint_indices=joint_indices,
+            ee_link_index=ee_link_index,
+        )
+        all_gnn_results[gnn_lambda] = {**metrics, "lambda": gnn_lambda}
     
     # Save results
+    results = {
+        "mlp": all_mlp_results,
+        "gnn": all_gnn_results,
+    }
     with open(data_dir / "lambda_sweep_results.json", "w") as f:
         json.dump(results, f, indent=2)
     
-    # Generate lambda sweep plot (if we have multiple lambda values, otherwise just show current)
+    # Generate lambda sweep plots
     plots_dir = results_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
     
-    # Extract metrics for plotting
-    mlp_lambda = results["mlp"]["lambda"]
-    gnn_lambda = results["gnn"]["lambda"]
+    # Extract data for plotting
+    mlp_lambdas = sorted(all_mlp_results.keys())
+    gnn_lambdas = sorted(all_gnn_results.keys())
     
-    # Create plot showing accuracy vs smoothness tradeoff
-    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(14, 10))
+    has_sweep = len(mlp_lambdas) > 1 or len(gnn_lambdas) > 1
     
-    # Plot 1: Joint MSE vs Lambda
-    ax1.scatter([mlp_lambda], [results["mlp"]["joint_mse"]], s=200, label="MLP", color='steelblue', marker='o', alpha=0.7)
-    ax1.scatter([gnn_lambda], [results["gnn"]["joint_mse"]], s=200, label="GNN", color='coral', marker='s', alpha=0.7)
-    ax1.set_xlabel("λ (Movement Penalty)")
-    ax1.set_ylabel("Joint MSE")
-    ax1.set_title("Joint MSE vs Lambda")
-    ax1.legend()
-    ax1.grid(True, alpha=0.3)
-    ax1.set_xscale('log')
-    
-    # Plot 2: EE MSE vs Lambda
-    ax2.scatter([mlp_lambda], [results["mlp"]["ee_mse"]], s=200, label="MLP", color='steelblue', marker='o', alpha=0.7)
-    ax2.scatter([gnn_lambda], [results["gnn"]["ee_mse"]], s=200, label="GNN", color='coral', marker='s', alpha=0.7)
-    ax2.set_xlabel("λ (Movement Penalty)")
-    ax2.set_ylabel("EE MSE (m²)")
-    ax2.set_title("End-Effector MSE vs Lambda")
-    ax2.legend()
-    ax2.grid(True, alpha=0.3)
-    ax2.set_xscale('log')
-    
-    # Plot 3: Mean Δq L2 vs Lambda (smoothness)
-    ax3.scatter([mlp_lambda], [results["mlp"]["mean_dq_L2"]], s=200, label="MLP", color='steelblue', marker='o', alpha=0.7)
-    ax3.scatter([gnn_lambda], [results["gnn"]["mean_dq_L2"]], s=200, label="GNN", color='coral', marker='s', alpha=0.7)
-    ax3.set_xlabel("λ (Movement Penalty)")
-    ax3.set_ylabel("Mean Δq L2 Norm")
-    ax3.set_title("Joint Movement (Smoothness) vs Lambda")
-    ax3.legend()
-    ax3.grid(True, alpha=0.3)
-    ax3.set_xscale('log')
-    
-    # Plot 4: Accuracy vs Smoothness tradeoff
-    ax4.scatter([results["mlp"]["mean_dq_L2"]], [results["mlp"]["ee_mse"]], s=200, label="MLP", color='steelblue', marker='o', alpha=0.7)
-    ax4.scatter([results["gnn"]["mean_dq_L2"]], [results["gnn"]["ee_mse"]], s=200, label="GNN", color='coral', marker='s', alpha=0.7)
-    ax4.set_xlabel("Mean Δq L2 Norm (Smoothness)")
-    ax4.set_ylabel("EE MSE (m²) (Accuracy)")
-    ax4.set_title("Accuracy vs Smoothness Tradeoff")
-    ax4.legend()
-    ax4.grid(True, alpha=0.3)
-    # Add annotations
-    ax4.annotate(f'λ={mlp_lambda}', 
-                (results["mlp"]["mean_dq_L2"], results["mlp"]["ee_mse"]),
-                xytext=(5, 5), textcoords='offset points', fontsize=9)
-    ax4.annotate(f'λ={gnn_lambda}', 
-                (results["gnn"]["mean_dq_L2"], results["gnn"]["ee_mse"]),
-                xytext=(5, 5), textcoords='offset points', fontsize=9)
+    if has_sweep:
+        # True lambda sweep - plot curves
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(14, 10))
+        
+        # Plot 1: Joint MSE vs Lambda
+        if mlp_lambdas:
+            mlp_vals = [all_mlp_results[lam]["joint_mse"] for lam in mlp_lambdas]
+            ax1.plot(mlp_lambdas, mlp_vals, 'o-', label="MLP", color='steelblue', linewidth=2, markersize=8)
+        if gnn_lambdas:
+            gnn_vals = [all_gnn_results[lam]["joint_mse"] for lam in gnn_lambdas]
+            ax1.plot(gnn_lambdas, gnn_vals, 's-', label="GNN", color='coral', linewidth=2, markersize=8)
+        ax1.set_xlabel("λ (Movement Penalty)")
+        ax1.set_ylabel("Joint MSE")
+        ax1.set_title("Joint MSE vs Lambda")
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        ax1.set_xscale('log')
+        
+        # Plot 2: EE MSE vs Lambda
+        if mlp_lambdas:
+            mlp_vals = [all_mlp_results[lam]["ee_mse"] for lam in mlp_lambdas]
+            ax2.plot(mlp_lambdas, mlp_vals, 'o-', label="MLP", color='steelblue', linewidth=2, markersize=8)
+        if gnn_lambdas:
+            gnn_vals = [all_gnn_results[lam]["ee_mse"] for lam in gnn_lambdas]
+            ax2.plot(gnn_lambdas, gnn_vals, 's-', label="GNN", color='coral', linewidth=2, markersize=8)
+        ax2.set_xlabel("λ (Movement Penalty)")
+        ax2.set_ylabel("EE MSE (m²)")
+        ax2.set_title("End-Effector MSE vs Lambda")
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        ax2.set_xscale('log')
+        
+        # Plot 3: Mean Δq L2 vs Lambda (smoothness)
+        if mlp_lambdas:
+            mlp_vals = [all_mlp_results[lam]["mean_dq_L2"] for lam in mlp_lambdas]
+            ax3.plot(mlp_lambdas, mlp_vals, 'o-', label="MLP", color='steelblue', linewidth=2, markersize=8)
+        if gnn_lambdas:
+            gnn_vals = [all_gnn_results[lam]["mean_dq_L2"] for lam in gnn_lambdas]
+            ax3.plot(gnn_lambdas, gnn_vals, 's-', label="GNN", color='coral', linewidth=2, markersize=8)
+        ax3.set_xlabel("λ (Movement Penalty)")
+        ax3.set_ylabel("Mean Δq L2 Norm")
+        ax3.set_title("Joint Movement (Smoothness) vs Lambda")
+        ax3.legend()
+        ax3.grid(True, alpha=0.3)
+        ax3.set_xscale('log')
+        
+        # Plot 4: Accuracy vs Smoothness tradeoff
+        if mlp_lambdas:
+            mlp_smooth = [all_mlp_results[lam]["mean_dq_L2"] for lam in mlp_lambdas]
+            mlp_acc = [all_mlp_results[lam]["ee_mse"] for lam in mlp_lambdas]
+            ax4.plot(mlp_smooth, mlp_acc, 'o-', label="MLP", color='steelblue', linewidth=2, markersize=8)
+            for lam, s, a in zip(mlp_lambdas, mlp_smooth, mlp_acc):
+                ax4.annotate(f'λ={lam}', (s, a), xytext=(5, 5), textcoords='offset points', fontsize=8)
+        if gnn_lambdas:
+            gnn_smooth = [all_gnn_results[lam]["mean_dq_L2"] for lam in gnn_lambdas]
+            gnn_acc = [all_gnn_results[lam]["ee_mse"] for lam in gnn_lambdas]
+            ax4.plot(gnn_smooth, gnn_acc, 's-', label="GNN", color='coral', linewidth=2, markersize=8)
+            for lam, s, a in zip(gnn_lambdas, gnn_smooth, gnn_acc):
+                ax4.annotate(f'λ={lam}', (s, a), xytext=(5, 5), textcoords='offset points', fontsize=8)
+        ax4.set_xlabel("Mean Δq L2 Norm (Smoothness)")
+        ax4.set_ylabel("EE MSE (m²) (Accuracy)")
+        ax4.set_title("Accuracy vs Smoothness Tradeoff")
+        ax4.legend()
+        ax4.grid(True, alpha=0.3)
+    else:
+        # Single lambda value - show comparison bars
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(14, 10))
+        
+        mlp_lam = mlp_lambdas[0] if mlp_lambdas else None
+        gnn_lam = gnn_lambdas[0] if gnn_lambdas else None
+        
+        # Plot 1: Joint MSE comparison
+        if mlp_lam and gnn_lam:
+            ax1.bar([0, 1], [all_mlp_results[mlp_lam]["joint_mse"], all_gnn_results[gnn_lam]["joint_mse"]], 
+                    width=0.6, color=['steelblue', 'coral'], alpha=0.7)
+            ax1.set_xticks([0, 1])
+            ax1.set_xticklabels([f"MLP\n(λ={mlp_lam})", f"GNN\n(λ={gnn_lam})"])
+        ax1.set_ylabel("Joint MSE")
+        ax1.set_title("Joint MSE Comparison")
+        ax1.grid(True, alpha=0.3, axis="y")
+        
+        # Plot 2: EE MSE comparison
+        if mlp_lam and gnn_lam:
+            ax2.bar([0, 1], [all_mlp_results[mlp_lam]["ee_mse"], all_gnn_results[gnn_lam]["ee_mse"]], 
+                    width=0.6, color=['steelblue', 'coral'], alpha=0.7)
+            ax2.set_xticks([0, 1])
+            ax2.set_xticklabels([f"MLP\n(λ={mlp_lam})", f"GNN\n(λ={gnn_lam})"])
+        ax2.set_ylabel("EE MSE (m²)")
+        ax2.set_title("End-Effector MSE Comparison")
+        ax2.grid(True, alpha=0.3, axis="y")
+        
+        # Plot 3: Mean Δq L2 comparison
+        if mlp_lam and gnn_lam:
+            ax3.bar([0, 1], [all_mlp_results[mlp_lam]["mean_dq_L2"], all_gnn_results[gnn_lam]["mean_dq_L2"]], 
+                    width=0.6, color=['steelblue', 'coral'], alpha=0.7)
+            ax3.set_xticks([0, 1])
+            ax3.set_xticklabels([f"MLP\n(λ={mlp_lam})", f"GNN\n(λ={gnn_lam})"])
+        ax3.set_ylabel("Mean Δq L2 Norm")
+        ax3.set_title("Joint Movement (Smoothness) Comparison")
+        ax3.grid(True, alpha=0.3, axis="y")
+        
+        # Plot 4: Accuracy vs Smoothness tradeoff
+        if mlp_lam:
+            ax4.scatter([all_mlp_results[mlp_lam]["mean_dq_L2"]], [all_mlp_results[mlp_lam]["ee_mse"]], 
+                        s=200, label="MLP", color='steelblue', marker='o', alpha=0.7)
+            ax4.annotate(f'MLP\nλ={mlp_lam}', 
+                        (all_mlp_results[mlp_lam]["mean_dq_L2"], all_mlp_results[mlp_lam]["ee_mse"]),
+                        xytext=(5, 5), textcoords='offset points', fontsize=9)
+        if gnn_lam:
+            ax4.scatter([all_gnn_results[gnn_lam]["mean_dq_L2"]], [all_gnn_results[gnn_lam]["ee_mse"]], 
+                        s=200, label="GNN", color='coral', marker='s', alpha=0.7)
+            ax4.annotate(f'GNN\nλ={gnn_lam}', 
+                        (all_gnn_results[gnn_lam]["mean_dq_L2"], all_gnn_results[gnn_lam]["ee_mse"]),
+                        xytext=(5, 5), textcoords='offset points', fontsize=9)
+        ax4.set_xlabel("Mean Δq L2 Norm (Smoothness)")
+        ax4.set_ylabel("EE MSE (m²) (Accuracy)")
+        ax4.set_title(f"Accuracy vs Smoothness Tradeoff")
+        ax4.legend()
+        ax4.grid(True, alpha=0.3)
     
     plt.tight_layout()
     plt.savefig(plots_dir / "lambda_sweep_analysis.png", dpi=300, bbox_inches="tight")
@@ -391,7 +528,10 @@ def run_lambda_sweep(
     print(f"Saved: {plots_dir / 'lambda_sweep_analysis.png'}")
     
     print(f"\nResults saved to {data_dir / 'lambda_sweep_results.json'}")
-    print("\nNote: For full lambda sweep, train models with --lambda-movement 0.01, 0.1, 0.2")
+    if not has_sweep:
+        print("\nNote: Only single lambda value evaluated. For full lambda sweep:")
+        print("  1. Train models with --lambda-movement 0.01, 0.1, 0.2")
+        print("  2. Pass checkpoints as: --mlp-checkpoints '{\"0.01\": \"path1.ckpt\", \"0.1\": \"path2.ckpt\", \"0.2\": \"path3.ckpt\"}'")
     
     import pybullet as p
     p.disconnect(client_id)
@@ -854,14 +994,26 @@ def main():
     parser.add_argument(
         "--mlp-ckpt",
         type=str,
-        required=True,
-        help="Path to MLP checkpoint",
+        default=None,
+        help="Path to MLP checkpoint (auto-finds if not provided)",
     )
     parser.add_argument(
         "--gnn-ckpt",
         type=str,
-        required=True,
-        help="Path to GNN checkpoint",
+        default=None,
+        help="Path to GNN checkpoint (auto-finds if not provided)",
+    )
+    parser.add_argument(
+        "--mlp-checkpoint-dir",
+        type=str,
+        default="mlp_ik_traj_checkpoints",
+        help="Directory to search for MLP checkpoints",
+    )
+    parser.add_argument(
+        "--gnn-checkpoint-dir",
+        type=str,
+        default="gnn_ik_checkpoints",
+        help="Directory to search for GNN checkpoints",
     )
     parser.add_argument(
         "--results-dir",
@@ -878,6 +1030,23 @@ def main():
         "--skip-lambda",
         action="store_true",
         help="Skip lambda sweep",
+    )
+    parser.add_argument(
+        "--mlp-checkpoints",
+        type=str,
+        default=None,
+        help="JSON dict mapping lambda values to MLP checkpoint paths, e.g. '{\"0.001\": \"path1.ckpt\", \"0.01\": \"path2.ckpt\", \"0.1\": \"path3.ckpt\", \"1.0\": \"path4.ckpt\"}'. Auto-finds if not provided.",
+    )
+    parser.add_argument(
+        "--gnn-checkpoints",
+        type=str,
+        default=None,
+        help="JSON dict mapping lambda values to GNN checkpoint paths, e.g. '{\"0.001\": \"path1.ckpt\", \"0.01\": \"path2.ckpt\", \"0.1\": \"path3.ckpt\", \"1.0\": \"path4.ckpt\"}'. Auto-finds if not provided.",
+    )
+    parser.add_argument(
+        "--no-auto-find",
+        action="store_true",
+        help="Disable automatic checkpoint finding",
     )
     parser.add_argument(
         "--skip-plots",
@@ -899,36 +1068,79 @@ def main():
     args = parser.parse_args()
     results_dir = Path(args.results_dir)
     
-    if not args.skip_rollout:
-        run_trajectory_rollout_eval(
-            csv_path=args.csv_path,
-            mlp_ckpt=args.mlp_ckpt,
-            gnn_ckpt=args.gnn_ckpt,
-            num_trajectories=20,
-            traj_length=50,
-            device=args.device,
-            results_dir=results_dir,
+    # Auto-find checkpoints if not provided
+    mlp_ckpt = args.mlp_ckpt
+    gnn_ckpt = args.gnn_ckpt
+    
+    if mlp_ckpt is None or gnn_ckpt is None:
+        print("\nAuto-finding checkpoints...")
+        auto_mlp, auto_gnn = auto_find_checkpoints(
+            mlp_checkpoint_dir=args.mlp_checkpoint_dir,
+            gnn_checkpoint_dir=args.gnn_checkpoint_dir,
+            model_type="traj",
         )
+        if mlp_ckpt is None:
+            mlp_ckpt = auto_mlp
+        if gnn_ckpt is None:
+            gnn_ckpt = auto_gnn
+        
+        if mlp_ckpt:
+            print(f"  MLP checkpoint: {mlp_ckpt}")
+        else:
+            print("  Warning: No MLP checkpoint found!")
+        
+        if gnn_ckpt:
+            print(f"  GNN checkpoint: {gnn_ckpt}")
+        else:
+            print("  Warning: No GNN checkpoint found!")
+    
+    if not args.skip_rollout:
+        if mlp_ckpt is None or gnn_ckpt is None:
+            print("Skipping trajectory rollout - checkpoints not found")
+        else:
+            run_trajectory_rollout_eval(
+                csv_path=args.csv_path,
+                mlp_ckpt=mlp_ckpt,
+                gnn_ckpt=gnn_ckpt,
+                num_trajectories=20,
+                traj_length=50,
+                device=args.device,
+                results_dir=results_dir,
+            )
     
     if not args.skip_lambda:
+        # Parse checkpoint dictionaries if provided
+        mlp_checkpoints = None
+        gnn_checkpoints = None
+        if args.mlp_checkpoints:
+            mlp_checkpoints = {float(k): v for k, v in json.loads(args.mlp_checkpoints).items()}
+        if args.gnn_checkpoints:
+            gnn_checkpoints = {float(k): v for k, v in json.loads(args.gnn_checkpoints).items()}
+        
         run_lambda_sweep(
             csv_path=args.csv_path,
-            base_mlp_ckpt=args.mlp_ckpt,
-            base_gnn_ckpt=args.gnn_ckpt,
+            mlp_checkpoints=mlp_checkpoints,
+            gnn_checkpoints=gnn_checkpoints,
+            base_mlp_ckpt=mlp_ckpt if not mlp_checkpoints else None,
+            base_gnn_ckpt=gnn_ckpt if not gnn_checkpoints else None,
+            auto_find=not args.no_auto_find,
             device=args.device,
             results_dir=results_dir,
         )
     
     if not args.skip_plots:
-        generate_all_plots(
-            csv_path=args.csv_path,
-            mlp_ckpt=args.mlp_ckpt,
-            gnn_ckpt=args.gnn_ckpt,
-            num_samples=500,
-            device=args.device,
-            results_dir=results_dir,
-            include_classical=not args.no_classical,
-        )
+        if mlp_ckpt is None or gnn_ckpt is None:
+            print("Skipping plot generation - checkpoints not found")
+        else:
+            generate_all_plots(
+                csv_path=args.csv_path,
+                mlp_ckpt=mlp_ckpt,
+                gnn_ckpt=gnn_ckpt,
+                num_samples=500,
+                device=args.device,
+                results_dir=results_dir,
+                include_classical=not args.no_classical,
+            )
     
     print("\n" + "="*60)
     print("ALL RESULTS GENERATED SUCCESSFULLY!")

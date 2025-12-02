@@ -1,0 +1,11 @@
+dropout: 0.1
+hidden_dims:
+- 256
+- 256
+- 128
+input_dim: 7
+lambda_movement: 0.1
+learning_rate: 0.001
+output_dim: 7
+predict_delta: false
+weight_decay: 0.0001
