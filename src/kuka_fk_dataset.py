@@ -1,40 +1,14 @@
 # kuka_fk_dataset.py
-import os
 import math
 import random
 import argparse
-from typing import List, Tuple
 from pathlib import Path
 
 import numpy as np
 import pybullet as p
 import pybullet_data as pd
 
-
-def get_revolute_joints(body_id: int) -> List[int]:
-    """Return indices of all revolute/prismatic joints in order."""
-    n_joints = p.getNumJoints(body_id)
-    movable = []
-    for j in range(n_joints):
-        ji = p.getJointInfo(body_id, j)
-        joint_type = ji[2]
-        # 0=REVOLUTE, 1=PRISMATIC, 4=GEAR (skip), others fixed
-        if joint_type in (p.JOINT_REVOLUTE, p.JOINT_PRISMATIC):
-            movable.append(j)
-    return movable
-
-
-def get_joint_limits(body_id: int, joint_indices: List[int]) -> Tuple[np.ndarray, np.ndarray]:
-    """Read lower/upper limits from URDF; fall back to [-pi, pi] if invalid."""
-    lowers, uppers = [], []
-    for j in joint_indices:
-        ji = p.getJointInfo(body_id, j)
-        lo, hi = ji[8], ji[9]  # jointLowerLimit, jointUpperLimit
-        if hi < lo or abs(lo) == 0.0 and abs(hi) == 0.0:
-            lo, hi = -math.pi, math.pi
-        lowers.append(lo)
-        uppers.append(hi)
-    return np.array(lowers, dtype=np.float32), np.array(uppers, dtype=np.float32)
+from classical_ik import get_revolute_joints, get_joint_limits
 
 
 def sample_joints(lowers: np.ndarray, uppers: np.ndarray, rng: random.Random) -> np.ndarray:

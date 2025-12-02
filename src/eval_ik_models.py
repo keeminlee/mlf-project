@@ -41,12 +41,12 @@ import torch
 
 from torch_geometric.loader import DataLoader as GeoDataLoader
 
-from mlp_ik import IKMLP, load_traj_csv as load_traj_csv_mlp, load_ik_csv
+from mlp_ik import IKMLP
 from gnn_ik import (
     IK_GNN,
     KukaTrajGraphDataset,
-    load_traj_csv as load_traj_csv_gnn,
 )
+from data_utils import load_ik_csv, load_traj_csv
 from classical_ik import (
     connect_pybullet,
     load_kuka,
@@ -190,7 +190,7 @@ def eval_mlp_traj(
     """
     Evaluate MLP IK model trained in trajectory mode.
 
-    Data layout from load_traj_csv_mlp:
+    Data layout from load_traj_csv:
         poses:   (N, pose_dim)
         q_prev:  (N, 7)
         q_curr:  (N, 7)
@@ -209,7 +209,7 @@ def eval_mlp_traj(
     csv_path = Path(csv_path)
     ckpt_path = Path(ckpt_path)
 
-    poses, q_prev, q_curr, pose_dim = load_traj_csv_mlp(
+    poses, q_prev, q_curr, pose_dim = load_traj_csv(
         csv_path, use_orientation=use_orientation
     )
     N = poses.shape[0]
@@ -303,7 +303,7 @@ def eval_gnn_traj(
     csv_path = Path(csv_path)
     ckpt_path = Path(ckpt_path)
 
-    poses, q_prev, q_curr, pose_dim = load_traj_csv_gnn(
+    poses, q_prev, q_curr, pose_dim = load_traj_csv(
         csv_path, use_orientation=use_orientation
     )
     N = poses.shape[0]

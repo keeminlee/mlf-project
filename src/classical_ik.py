@@ -96,6 +96,7 @@ def get_joint_limits(
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Get joint lower/upper limits for a subset of joints.
+    Falls back to [-pi, pi] if limits are invalid.
 
     Args:
         body_uid:       PyBullet body unique id
@@ -105,12 +106,17 @@ def get_joint_limits(
         joint_lowers: (n_joints,) array
         joint_uppers: (n_joints,) array
     """
+    import math
     lowers = []
     uppers = []
     for j in joint_indices:
         info = p.getJointInfo(body_uid, j)
-        lowers.append(info[8])  # joint lower limit
-        uppers.append(info[9])  # joint upper limit
+        lo, hi = info[8], info[9]  # joint lower limit, joint upper limit
+        # Fall back to [-pi, pi] if limits are invalid
+        if hi < lo or (abs(lo) == 0.0 and abs(hi) == 0.0):
+            lo, hi = -math.pi, math.pi
+        lowers.append(lo)
+        uppers.append(hi)
     return np.array(lowers, dtype=np.float32), np.array(uppers, dtype=np.float32)
 
 

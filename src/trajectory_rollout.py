@@ -37,7 +37,8 @@ import numpy as np
 import torch
 from torch_geometric.data import Data
 
-from gnn_ik import IK_GNN, load_traj_csv
+from gnn_ik import IK_GNN
+from data_utils import load_traj_csv
 from mlp_ik import IKMLP
 from classical_ik import (
     connect_pybullet,

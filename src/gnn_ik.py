@@ -68,54 +68,7 @@ from grid_search import IKGridSearch
 # Data loading utilities (TRAJ mode only)
 # ------------------------------------------------------------------------------
 
-def load_traj_csv(
-    csv_path: str | Path,
-    use_orientation: bool = False,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
-    """
-    Load trajectory-style IK dataset from CSV (TRAJ mode).
-
-    Expected columns (from kuka_fk_dataset.py --data-type traj):
-
-      if not include_orientation (pose_dim=3):
-          [ee_x, ee_y, ee_z,
-           q_prev_0..6,
-           q_curr_0..6]
-
-      if include_orientation (pose_dim=7):
-          [ee_x, ee_y, ee_z, ee_qx, ee_qy, ee_qz, ee_qw,
-           q_prev_0..6,
-           q_curr_0..6]
-
-    Returns:
-        poses:   (N, pose_dim)
-        q_prev:  (N, 7)
-        q_curr:  (N, 7)
-        pose_dim: int
-    """
-    csv_path = Path(csv_path)
-    data = np.loadtxt(csv_path, delimiter=",", skiprows=1)
-
-    pose_dim = 7 if use_orientation else 3
-    num_cols = data.shape[1]
-
-    expected_cols = pose_dim + 14  # pose + 7 q_prev + 7 q_curr
-    if num_cols != expected_cols:
-        raise ValueError(
-            f"Expected TRAJ CSV with {expected_cols} columns "
-            f"(pose_dim={pose_dim} + 14), got {num_cols}."
-        )
-
-    poses = data[:, :pose_dim]
-    q_prev = data[:, pose_dim:pose_dim + 7]
-    q_curr = data[:, pose_dim + 7:]
-
-    return (
-        poses.astype(np.float32),
-        q_prev.astype(np.float32),
-        q_curr.astype(np.float32),
-        pose_dim,
-    )
+from data_utils import load_traj_csv
 
 
 # ------------------------------------------------------------------------------
