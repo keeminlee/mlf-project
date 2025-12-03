@@ -1,0 +1,87 @@
+# Checkpoint directories
+*_checkpoints/
+**/*_checkpoints/
+
+# Log directories
+*_logs/
+**/*_logs/
+lightning_logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Testing
+.pytest_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*.swo
+*~
+
+# Large generated files
+*.pth
+*.pt
+*.h5
+*.hdf5
+
+# Results (optional - uncomment if you don't want to track results/)
+# Keep results/ tracked - useful for showing project outputs
+# results/
+
+# Data files - ignore since they can be regenerated from scripts
+data/*.csv
+data/*.npz
+data/*.pkl
+data/*.h5
+data/*.hdf5
+
