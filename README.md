@@ -31,7 +31,7 @@ pip install -r requirements.txt
 ```text
 mlf-project/
 ├── data/                          # CSV datasets generated via PyBullet
-│   ├── kuka_fk_dataset.csv       # Single-shot FK dataset
+│   ├── kuka_fk_dataset.csv        # Single-shot FK dataset
 │   └── kuka_traj_dataset_traj.csv # Trajectory dataset (Δq training)
 │
 ├── src/                           # Source code
@@ -45,7 +45,6 @@ mlf-project/
 │   ├── trajectory_rollout.py      # Sequential trajectory rollout experiments
 │   ├── grid_search.py             # Hyperparameter grid search utility
 │   ├── generate_report_results.py # Report generation (plots + metrics)
-│   └── inference_demo.py          # Simple inference demo (target pose → trajectory)
 │
 ├── results/                        # Generated results and plots
 │   ├── plots/                      # All plots (PNG, 300 DPI)
@@ -203,7 +202,7 @@ python src/eval_ik_models.py \
   --num-samples 0
 ```
 
-**Note:** Evaluation uses the **TEST set** (same train/val/test split as training: seed=42, 15%/15% splits). The `--num-samples` parameter randomly samples from the test set. Set to `0` to evaluate on the entire test set.
+**Note:** The `--num-samples` parameter randomly samples from the test set. Set to `0` to evaluate on the entire test set.
 
 Computes:
 
@@ -261,11 +260,9 @@ Outputs:
 
 Generate all results and plots for the report. **Checkpoints are automatically found** - no need to manually specify paths!
 
-**For full lambda sweep:**
-
 1. **Train models with different lambda values:**
 ```bash
-# Train all models with λ = 0.001, 0.01, 0.1, 1.0 (logarithmic scale: 1e-3, 1e-2, 1e-1, 1e0)
+# Train all models with λ = 1e-3, 1e-2, 1e-1, 1e0
 ./train_lambda_sweep.sh
 ```
 
@@ -291,9 +288,8 @@ This generates:
    - Data: Statistics (mean/std/max EE error, cumulative drift, mean Δq norm)
 
 2. **Lambda sweep results**: Accuracy vs smoothness tradeoff
-   - **For full sweep**: Train models with λ = 0.001, 0.01, 0.1, 1.0 (logarithmic scale: 1e-3, 1e-2, 1e-1, 1e0)
-   - Use `./train_lambda_sweep.sh` to train all models automatically
-   - Plot: Joint MSE vs Lambda (curve if multiple λ values, bar if single)
+   - Train models with λ = 1e-3, 1e-2, 1e-1, 1e0
+   - Plot: Joint MSE vs Lambda
    - Plot: EE MSE vs Lambda
    - Plot: Mean Δq (smoothness) vs Lambda
    - Plot: Accuracy vs Smoothness tradeoff
@@ -306,36 +302,8 @@ This generates:
    - Boxplot comparing movement magnitudes (MLP, GNN)
 
 Results are saved to `results/` directory:
-- `results/plots/` - All PNG plots (300 DPI, ready for report)
+- `results/plots/` - All PNG plots
 - `results/data/` - JSON and NPZ data files
-
----
-
-## 🎯 8. Simple Inference Demo
-
-Demonstrate inference: Given a target pose, predict the trajectory.
-
-```bash
-# Simplest usage - auto-finds best checkpoints:
-python src/inference_demo.py \
-  --csv-path data/kuka_traj_dataset_traj.csv \
-  --use-orientation \
-  --num-steps 10
-
-# Or manually specify checkpoints (optional):
-python src/inference_demo.py \
-  --csv-path data/kuka_traj_dataset_traj.csv \
-  --use-orientation \
-  --mlp-ckpt mlp_ik_traj_checkpoints/ikmlp-epoch=AAA-val_loss=BBB.ckpt \
-  --gnn-ckpt gnn_ik_checkpoints/gnnik-epoch=XXX-val_loss=YYY.ckpt \
-  --num-steps 10
-```
-
-This script:
-- Loads a sequence of target end-effector poses
-- Predicts joint configurations using MLP and GNN models
-- Shows step-by-step predictions and EE errors
-- Demonstrates how models follow a trajectory
 
 ---
 
