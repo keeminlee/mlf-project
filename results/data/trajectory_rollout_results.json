@@ -1,20 +1,20 @@
 {
   "stats": {
     "mlp": {
-      "mean_ee_error": 0.44689920447953047,
-      "std_ee_error": 0.35346393836068385,
-      "max_ee_error": 1.3735921382904053,
-      "mean_dq_norm": 0.009045491981552915,
-      "std_dq_norm": 0.0027077927229272286,
-      "cumulative_ee_drift": 22.34496022397652
+      "mean_ee_error": 0.4555317835705355,
+      "std_ee_error": 0.35459761593442685,
+      "max_ee_error": 1.322542428970337,
+      "mean_dq_norm": 0.008270177466329187,
+      "std_dq_norm": 0.001893372396322947,
+      "cumulative_ee_drift": 22.776589178526773
     },
     "gnn": {
-      "mean_ee_error": 0.4543152893530205,
-      "std_ee_error": 0.3629858541836652,
-      "max_ee_error": 1.4274802207946777,
-      "mean_dq_norm": 0.005424670662498102,
-      "std_dq_norm": 0.0009002130970692735,
-      "cumulative_ee_drift": 22.715764467651024
+      "mean_ee_error": 0.4552760590752587,
+      "std_ee_error": 0.36162463328394145,
+      "max_ee_error": 1.423104166984558,
+      "mean_dq_norm": 0.002222535265143961,
+      "std_dq_norm": 0.0004219203966094521,
+      "cumulative_ee_drift": 22.763802953762934
     }
   },
   "num_trajectories": 20,

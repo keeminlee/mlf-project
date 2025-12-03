@@ -44,7 +44,8 @@ mlf-project/
 │   ├── eval_ik_models.py          # Model evaluation (joint + EE errors)
 │   ├── trajectory_rollout.py      # Sequential trajectory rollout experiments
 │   ├── grid_search.py             # Hyperparameter grid search utility
-│   └── generate_report_results.py # Report generation (plots + metrics)
+│   ├── generate_report_results.py # Report generation (plots + metrics)
+│   └── inference_demo.py          # Simple inference demo (target pose → trajectory)
 │
 ├── results/                        # Generated results and plots
 │   ├── plots/                      # All plots (PNG, 300 DPI)
@@ -260,27 +261,6 @@ Outputs:
 
 Generate all results and plots for the report. **Checkpoints are automatically found** - no need to manually specify paths!
 
-```bash
-# Simplest usage - auto-finds best checkpoints:
-python src/generate_report_results.py \
-  --csv-path data/kuka_traj_dataset_traj.csv \
-  --results-dir results
-
-# Or specify checkpoint directories:
-python src/generate_report_results.py \
-  --csv-path data/kuka_traj_dataset_traj.csv \
-  --mlp-checkpoint-dir mlp_ik_traj_checkpoints \
-  --gnn-checkpoint-dir gnn_ik_checkpoints \
-  --results-dir results
-
-# Or manually specify checkpoints (optional):
-python src/generate_report_results.py \
-  --csv-path data/kuka_traj_dataset_traj.csv \
-  --mlp-ckpt mlp_ik_traj_checkpoints/ikmlp-epoch=AAA-val_loss=BBB.ckpt \
-  --gnn-ckpt gnn_ik_checkpoints/gnnik-epoch=XXX-val_loss=YYY.ckpt \
-  --results-dir results
-```
-
 **For full lambda sweep:**
 
 1. **Train models with different lambda values:**
@@ -309,7 +289,6 @@ This generates:
    - Plot: EE error over trajectory steps (mean ± std across trajectories)
    - Plot: Cumulative EE drift over trajectories
    - Data: Statistics (mean/std/max EE error, cumulative drift, mean Δq norm)
-   - **Great figure for the report!**
 
 2. **Lambda sweep results**: Accuracy vs smoothness tradeoff
    - **For full sweep**: Train models with λ = 0.001, 0.01, 0.1, 1.0 (logarithmic scale: 1e-3, 1e-2, 1e-1, 1e0)
@@ -319,7 +298,6 @@ This generates:
    - Plot: Mean Δq (smoothness) vs Lambda
    - Plot: Accuracy vs Smoothness tradeoff
    - Data: Metrics for each lambda value
-   - **Should be super quick to run!**
 
 3. **All plots for report** (includes classical IK baselines):
    - Joint MSE/MAE comparison (MLP, GNN, DLS, PyBullet)
@@ -333,6 +311,34 @@ Results are saved to `results/` directory:
 
 ---
 
+## 🎯 8. Simple Inference Demo
+
+Demonstrate inference: Given a target pose, predict the trajectory.
+
+```bash
+# Simplest usage - auto-finds best checkpoints:
+python src/inference_demo.py \
+  --csv-path data/kuka_traj_dataset_traj.csv \
+  --use-orientation \
+  --num-steps 10
+
+# Or manually specify checkpoints (optional):
+python src/inference_demo.py \
+  --csv-path data/kuka_traj_dataset_traj.csv \
+  --use-orientation \
+  --mlp-ckpt mlp_ik_traj_checkpoints/ikmlp-epoch=AAA-val_loss=BBB.ckpt \
+  --gnn-ckpt gnn_ik_checkpoints/gnnik-epoch=XXX-val_loss=YYY.ckpt \
+  --num-steps 10
+```
+
+This script:
+- Loads a sequence of target end-effector poses
+- Predicts joint configurations using MLP and GNN models
+- Shows step-by-step predictions and EE errors
+- Demonstrates how models follow a trajectory
+
+---
+
 ## 📝 Notes
 
 - PyBullet runs in DIRECT (headless) mode  
@@ -340,4 +346,13 @@ Results are saved to `results/` directory:
 - GNN uses PyTorch Geometric  
 - Supports CPU / CUDA / MPS (Apple Silicon)
 - Train/val/test splits: 70%/15%/15% with seed=42 (consistent across training and evaluation)
+
+## 📊 Summary of Findings
+
+**Key Results:**
+- Both MLP and GNN models achieve low end-effector errors (< 1cm) on test trajectories
+- GNN model shows better smoothness (lower Δq norms) due to graph structure and movement penalty
+- Trajectory rollout demonstrates stable long-horizon predictions with minimal cumulative drift
+- Lambda sweep reveals accuracy vs. smoothness tradeoff: higher λ values reduce joint movement but may slightly increase EE error
+- Classical IK baselines (DLS, PyBullet) provide competitive accuracy but lack the smoothness of learned models
 

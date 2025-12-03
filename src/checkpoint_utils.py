@@ -52,7 +52,8 @@ def find_best_checkpoint(
     
     for ckpt in checkpoints:
         # Extract val_loss from filename: "ikmlp-epoch=012-val_loss=0.0025.ckpt"
-        match = re.search(r'val_loss=([\d.]+)', ckpt.name)
+        # Match digits and decimal point, but stop before .ckpt extension
+        match = re.search(r'val_loss=(\d+\.?\d*)', ckpt.name)
         if match:
             val_loss = float(match.group(1))
             
@@ -146,7 +147,7 @@ def find_checkpoints_by_lambda(
                 continue
             
             # Extract validation loss from filename
-            match = re.search(r'val_loss=([\d.]+)', ckpt_path.name)
+            match = re.search(r'val_loss=(\d+\.?\d*)', ckpt_path.name)
             if match:
                 val_loss = float(match.group(1))
                 
