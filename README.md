@@ -38,6 +38,7 @@ mlf-project/
 │   ├── kuka_fk_dataset.py        # FK data generator (single-shot & trajectory)
 │   ├── classical_ik.py           # Classical IK: FK, Jacobian, DLS, PyBullet IK
 │   ├── data_utils.py              # Shared data loading utilities
+│   ├── checkpoint_utils.py        # Automatic checkpoint finding utilities
 │   ├── mlp_ik.py                  # MLP IK model (single-shot & trajectory Δq)
 │   ├── gnn_ik.py                  # GNN IK model (trajectory Δq only)
 │   ├── eval_ik_models.py          # Model evaluation (joint + EE errors)
@@ -49,15 +50,21 @@ mlf-project/
 │   ├── plots/                      # All plots (PNG, 300 DPI)
 │   └── data/                       # Metrics and data files (JSON, NPZ)
 │
-├── mlp_ik_checkpoints/            # MLP single-shot checkpoints (created during training)
-├── mlp_ik_traj_checkpoints/       # MLP trajectory Δq checkpoints (created during training)
-├── gnn_ik_checkpoints/            # GNN trajectory Δq checkpoints (created during training)
+├── mlp_ik_checkpoints/            # MLP single-shot checkpoints (created during training, ignored by git)
+├── mlp_ik_traj_checkpoints/       # MLP trajectory Δq checkpoints (created during training, ignored by git)
+├── gnn_ik_checkpoints/            # GNN trajectory Δq checkpoints (created during training, ignored by git)
 │
 ├── run_report_generation.sh       # Script to generate all report results
 ├── train_lambda_sweep.sh          # Script to train models with different lambda values
 ├── requirements.txt               # Python dependencies
+├── .gitignore                     # Git ignore patterns (checkpoints, logs, data files)
 └── README.md                      # This file
 ```
+
+**Note:** The following are ignored by git (via `.gitignore`) since they can be regenerated:
+- `*_checkpoints/` directories (model checkpoints)
+- `*_logs/` and `lightning_logs/` directories (training logs)
+- `data/*.csv`, `data/*.npz`, `data/*.pkl` (generated datasets)
 
 ---
 
