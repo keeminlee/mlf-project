@@ -261,8 +261,6 @@ Outputs:
 
 Generate all results and plots for the report. **Checkpoints are automatically found** - no need to manually specify paths!
 
-**For full lambda sweep:**
-
 1. **Train models with different lambda values:**
 ```bash
 # Train all models with λ = 0.001, 0.01, 0.1, 1.0 (logarithmic scale: 1e-3, 1e-2, 1e-1, 1e0)
